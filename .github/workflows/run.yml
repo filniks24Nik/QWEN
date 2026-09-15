@@ -42,7 +42,7 @@ jobs:
           import os
           c = OpenAI(base_url='https://api.groq.com/openai/v1', api_key=os.environ['GROQ_API_KEY'])
           r = c.chat.completions.create(
-              model='llama-3.3-70b-versatile',
+              model='openai/gpt-oss-120b',
               messages=[{'role':'user','content':'Назови 3 AI инструмента одной строкой'}],
               max_tokens=100,
           )
