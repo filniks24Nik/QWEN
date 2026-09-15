@@ -33,6 +33,12 @@ jobs:
           pip install -r requirements.txt
           pip install edge-tts requests
 
+      - name: List available Gemini models
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          python -c "from google import genai; import os; c = genai.Client(api_key=os.environ['GEMINI_API_KEY']); [print(m.name) for m in c.models.list()]"
+
       - name: Run factory
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
