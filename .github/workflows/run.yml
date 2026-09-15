@@ -10,7 +10,7 @@ on:
       topic:
         description: 'Тема'
         required: true
-        default: 'Топ-10 AI инструментов для бизнеса'
+        default: 'Топ-3 AI для копирайтеров'
 
 jobs:
   build:
@@ -31,17 +31,28 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
-          pip install edge-tts requests
+          pip install edge-tts requests openai
 
-      - name: List available Gemini models
+      - name: Test Groq connection
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
         run: |
-          python -c "from google import genai; import os; c = genai.Client(api_key=os.environ['GEMINI_API_KEY']); [print(m.name) for m in c.models.list()]"
+          python -c "
+          from openai import OpenAI
+          import os
+          c = OpenAI(base_url='https://api.groq.com/openai/v1', api_key=os.environ['GROQ_API_KEY'])
+          r = c.chat.completions.create(
+              model='llama-3.3-70b-versatile',
+              messages=[{'role':'user','content':'Назови 3 AI инструмента одной строкой'}],
+              max_tokens=100,
+          )
+          print('GROQ OK:', r.choices[0].message.content)
+          "
 
       - name: Run factory
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
         run: |
           python main.py create "${{ github.event.inputs.niche }}" "${{ github.event.inputs.topic }}"
 
