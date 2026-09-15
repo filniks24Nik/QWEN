@@ -10,8 +10,6 @@ class VoiceGenerator:
         self.output_dir = Path("audio_output")
         self.output_dir.mkdir(exist_ok=True)
 
-        # ru-RU-DmitryNeural  — мужской, спокойный
-        # ru-RU-SvetlanaNeural — женский, дружелюбный
         self.voice = "ru-RU-DmitryNeural"
         self.rate = "+0%"
         self.pitch = "+0Hz"
@@ -23,7 +21,8 @@ class VoiceGenerator:
             os.environ.pop(var, None)
 
     def _clean_text(self, text):
-        """Вырезает служебные маркеры [SCENE N], VISUAL:..., оставляя только TEXT."""
+        """Вырезает служебные маркеры: [SCENE N], VISUAL:..., GROUP:...
+        Оставляет только TEXT."""
         lines = text.split("\n")
         cleaned = []
         for line in lines:
@@ -32,9 +31,12 @@ class VoiceGenerator:
                 continue
             if re.match(r"^\[SCENE\s*\d+\]", s, re.IGNORECASE):
                 continue
-            if s.upper().startswith("VISUAL:"):
+            upper = s.upper()
+            if upper.startswith("VISUAL:"):
                 continue
-            if s.upper().startswith("TEXT:"):
+            if upper.startswith("GROUP:"):
+                continue
+            if upper.startswith("TEXT:"):
                 s = s[5:].strip()
             cleaned.append(s)
         return " ".join(cleaned)
