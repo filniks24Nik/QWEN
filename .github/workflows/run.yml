@@ -1,0 +1,47 @@
+name: Run YouTube Factory
+
+on:
+  workflow_dispatch:
+    inputs:
+      niche:
+        description: 'Ниша'
+        required: true
+        default: 'AI инструменты и автоматизация'
+      topic:
+        description: 'Тема'
+        required: true
+        default: 'Топ-10 AI инструментов для бизнеса'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install edge-tts requests
+
+      - name: Run factory
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          python main.py create "${{ github.event.inputs.niche }}" "${{ github.event.inputs.topic }}"
+
+      - name: Upload video
+        uses: actions/upload-artifact@v4
+        with:
+          name: video-output
+          path: video_output/
+          retention-days: 7
