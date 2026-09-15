@@ -7,8 +7,9 @@ from urllib.parse import urlparse, urlunparse
 
 class ImageFetcher:
     """
-    Ищет картинки через Wikimedia Commons.
-    Fallback: если запрос из 5 слов не найден — пробует 3, потом 2, потом 1.
+    Ищет картинки:
+    1. Если задан group (инструмент) — сначала пробуем найти логотип/скриншот через Wikipedia.
+    2. Потом ищем по visual через Wikimedia Commons (с fallback 5→1 слово).
     """
 
     def __init__(self):
@@ -26,8 +27,8 @@ class ImageFetcher:
             time.sleep(seconds - elapsed)
         self._last_request_time = time.time()
 
-    def _cache_path(self, query, index):
-        key = hashlib.md5(f"{query}_{index}".lower().encode()).hexdigest()
+    def _cache_path(self, key_str, index):
+        key = hashlib.md5(f"{key_str}_{index}".lower().encode()).hexdigest()
         return self.cache_dir / f"{key}.jpg"
 
     def _clean_url(self, url):
@@ -36,26 +37,62 @@ class ImageFetcher:
         parsed = urlparse(url)
         return urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", "", ""))
 
-    def fetch(self, query, index=0):
-        if not query or not query.strip():
-            return None
-
-        cached = self._cache_path(query, index)
+    def fetch(self, group, visual, index=0):
+        """group — имя инструмента (ChatGPT) или тема (intro).
+        visual — конкретный образ сцены."""
+        # Кэш по обоим ключам
+        cache_key = f"{group}__{visual}"
+        cached = self._cache_path(cache_key, index)
         if cached.exists() and cached.stat().st_size > 1000:
-            print(f"📦 Из кэша: {query}")
+            print(f"📦 Из кэша: {group} / {visual}")
             return str(cached)
 
-        words = query.split()
+        # 1. Логотип инструмента через Wikipedia
+        if group and group.lower() not in ("intro", "outro"):
+            url = self._wikipedia_logo(group)
+            if url and self._download(url, cached):
+                print(f"✅ Wikipedia logo: {group}")
+                return str(cached)
+
+        # 2. Локальный visual через Wikimedia Commons (fallback 5→1 слово)
+        words = visual.split()
         for n in range(min(5, len(words)), 0, -1):
             short_query = " ".join(words[:n])
             url = self._wikimedia_with_retry(short_query, index)
             if url and self._download(url, cached):
                 print(f"✅ Wikimedia ({n} сл.): {short_query}")
                 return str(cached)
-            if n > 1:
-                print(f"⚠️ Не найдено «{short_query}», пробую короче...")
 
-        print(f"❌ Ничего не найдено: {query}")
+        print(f"❌ Ничего не найдено: {group} / {visual}")
+        return None
+
+    def _wikipedia_logo(self, tool_name):
+        """Ищет основное изображение статьи Wikipedia (обычно это логотип/скриншот)."""
+        for lang in ("en", "ru"):
+            try:
+                self._wait(1.0)
+                r = self.session.get(
+                    f"https://{lang}.wikipedia.org/w/api.php",
+                    params={
+                        "action": "query",
+                        "format": "json",
+                        "titles": tool_name,
+                        "prop": "pageimages",
+                        "piprop": "original|thumbnail",
+                        "pithumbsize": 1920,
+                    },
+                    timeout=30,
+                )
+                if r.status_code != 200:
+                    continue
+                pages = r.json().get("query", {}).get("pages", {})
+                for page in pages.values():
+                    thumb = page.get("thumbnail", {})
+                    src = thumb.get("source")
+                    if src:
+                        return self._clean_url(src)
+            except Exception as e:
+                print(f"⚠️ Wikipedia {lang}: {e}")
         return None
 
     def _wikimedia_with_retry(self, query, index=0, attempts=2):
