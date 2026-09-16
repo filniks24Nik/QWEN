@@ -1,233 +1,188 @@
-from PIL import Image, ImageDraw, ImageFont
+import os
+from openai import OpenAI
 
-if not hasattr(Image, "ANTIALIAS"):
-    Image.ANTIALIAS = Image.LANCZOS
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+MODEL_NAME = "openai/gpt-oss-120b"
+JUDGE_MODEL = "openai/gpt-oss-120b"
 
-from moviepy.editor import *
-import numpy as np
-from pathlib import Path
-import textwrap
-import random
-import re
-
-from image_fetcher import ImageFetcher
+MAX_ATTEMPTS = 3
+MIN_SCORE = 7
 
 
-class VideoGenerator:
+class ScriptGenerator:
     def __init__(self):
-        self.output_dir = Path("video_output")
-        self.output_dir.mkdir(exist_ok=True)
+        self.client = OpenAI(base_url=GROQ_BASE_URL, api_key=GROQ_API_KEY) if GROQ_API_KEY else None
+        if not self.client:
+            print("⚠️  GROQ_API_KEY не задан — буду использовать шаблонные тексты.")
 
-        self.width = 1920
-        self.height = 1080
-        self.fps = 30
-
-        self.colors = {
-            "background": (15, 15, 35),
-            "text": (255, 255, 255),
-            "accent": (0, 200, 255),
-            "highlight": (255, 200, 0),
-        }
-
-        self._font_cache = {}
-        self.fetcher = ImageFetcher()
-
-        self.music_path = Path("background_music.mp3")
-        self.music_volume = 0.12
-
-    def _load_font(self, size):
-        if size in self._font_cache:
-            return self._font_cache[size]
-        candidates = [
-            "arial.ttf",
-            "C:\\Windows\\Fonts\\arial.ttf",
-            "/System/Library/Fonts/Supplemental/Arial.ttf",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-        ]
-        font = None
-        for path in candidates:
-            try:
-                font = ImageFont.truetype(path, size)
-                break
-            except Exception:
-                continue
-        if font is None:
-            font = ImageFont.load_default()
-        self._font_cache[size] = font
-        return font
-
-    def _parse_scenes(self, script):
-        """Парсит сценарий в список {group, visual, text}."""
-        scenes = []
-        blocks = re.split(r"\[SCENE\s*\d+\]", script, flags=re.IGNORECASE)
-        for block in blocks:
-            block = block.strip()
-            if not block:
-                continue
-            group = ""
-            visual = ""
-            text_lines = []
-            for line in block.split("\n"):
-                s = line.strip()
-                if not s:
-                    continue
-                upper = s.upper()
-                if upper.startswith("GROUP:"):
-                    group = s[6:].strip()
-                elif upper.startswith("VISUAL:"):
-                    visual = s[7:].strip()
-                elif upper.startswith("TEXT:"):
-                    text_lines.append(s[5:].strip())
-                else:
-                    text_lines.append(s)
-            text = " ".join(text_lines).strip()
-            if text or visual:
-                scenes.append({
-                    "group": group or "intro",
-                    "visual": visual or "abstract background",
-                    "text": text,
-                })
-        if not scenes:
-            scenes = [{"group": "intro", "visual": "abstract background", "text": script[:500]}]
-        return scenes
-
-    def _ken_burns(self, image_path, duration, direction="in"):
-        """Зум (приближение) без CompositeVideoClip — чтобы не терять RGB-каналы."""
+    def _generate(self, prompt, model=None, temperature=0.7):
         try:
-            img_clip = ImageClip(image_path).set_duration(duration)
+            r = self.client.chat.completions.create(
+                model=model or MODEL_NAME,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=temperature,
+                max_tokens=8000,
+            )
+            return r.choices[0].message.content
         except Exception as e:
-            print(f"⚠️ Не открыть {image_path}: {e}")
-            return ColorClip(size=(self.width, self.height),
-                             color=self.colors["background"], duration=duration)
+            print(f"⚠️ Groq ошибка: {e}")
+            return None
 
-        img_clip = img_clip.resize(height=self.height)
-        if img_clip.w < self.width:
-            img_clip = img_clip.resize(width=self.width)
+    def _judge(self, script):
+        """Судья оценивает сценарий по 5 критериям. Возвращает (оценка, фидбек)."""
+        prompt = f"""Ты — строгий редактор YouTube-канала. Оцени сценарий по 5 критериям.
 
-        if direction == "in":
-            zoomed = img_clip.resize(lambda t: 1 + 0.15 * (t / duration))
-        else:
-            zoomed = img_clip.resize(lambda t: 1.15 - 0.15 * (t / duration))
+СЦЕНАРИЙ:
+{script}
 
-        zoomed = zoomed.crop(
-            x_center=zoomed.w / 2,
-            y_center=zoomed.h / 2,
-            width=self.width,
-            height=self.height,
-        )
-        return zoomed.set_duration(duration)
+КРИТЕРИИ (каждый 1-10):
+1. НАЗВАНИЯ: названы ли инструменты ПО ИМЕНАМ (ChatGPT, Claude, Midjourney)?
+   Если ни одного имени — 1. Если 3+ имени — 8-10.
+2. ЦИФРЫ: есть ли цены, экономия времени, статистика?
+3. ПРИМЕРЫ: есть ли кейсы с именами людей?
+4. МИНУСЫ: у каждого инструмента есть минус/ограничение?
+5. ЧИСТОТА: нет ли фраз «в современном мире», «сегодня мы поговорим», «многие эксперты»?
 
-    def _add_text_overlay(self, clip, text, title=""):
-        font = self._load_font(40)
-        title_font = self._load_font(54)
-        wrapped = textwrap.fill(text, width=60)
-        W, H = self.width, self.height
+ФОРМАТ ОТВЕТА (строго):
+ОЦЕНКА: <среднее 1-10>
+ВЕРДИКТ: <PASS если >= 7, FAIL если < 7>
+ФИДБЕК: <что конкретно улучшить, 2-3 предложения>"""
 
-        def add_text(get_frame, t):
-            frame = get_frame(t).copy()
-            if frame.ndim == 2:
-                frame = np.stack([frame] * 3, axis=-1)
-            elif frame.shape[-1] == 4:
-                frame = frame[..., :3]
-            img = Image.fromarray(frame).convert("RGBA")
-            draw = ImageDraw.Draw(img)
+        result = self._generate(prompt, model=JUDGE_MODEL, temperature=0.3)
+        if not result:
+            return 10, "судья недоступен"
 
-            overlay = Image.new("RGBA", (W, 320), (0, 0, 0, 170))
-            img.paste(overlay, (0, H - 320), overlay)
+        score = 5
+        verdict = "PASS"
+        feedback = ""
+        for line in result.split("\n"):
+            if line.startswith("ОЦЕНКА:"):
+                try:
+                    score = int(line.replace("ОЦЕНКА:", "").strip().split()[0])
+                except Exception:
+                    pass
+            elif line.startswith("ВЕРДИКТ:"):
+                verdict = line.replace("ВЕРДИКТ:", "").strip()
+            elif line.startswith("ФИДБЕК:"):
+                feedback = line.replace("ФИДБЕК:", "").strip()
 
-            draw.multiline_text((60, H - 290), wrapped,
-                                fill=(255, 255, 255, 255), font=font, align="left")
-            if title:
-                draw.text((60, 50), title, fill=(0, 200, 255, 255), font=title_font)
+        return score, verdict, feedback
 
-            return np.array(img.convert("RGB"))
+    def generate_script(self, topic, niche, duration_minutes=10):
+        print(f"\n📝 Генерирую сценарий для: {topic}")
+        if not self.client:
+            return self._fallback_script(topic, niche)
 
-        return clip.fl(add_text)
+        base_prompt = f"""Ты — сценарист YouTube-канала про технологии. Создай КОНКРЕТНЫЙ сценарий.
+Общие фразы ЗАПРЕЩЕНЫ. Только факты, названия, цифры, примеры.
 
-    def create_intro(self, title, duration=3):
-        def make_frame(t):
-            img = Image.new("RGB", (self.width, self.height), self.colors["background"])
-            draw = ImageDraw.Draw(img)
-            alpha = min(1.0, t / 2)
-            font = self._load_font(80)
-            bbox = draw.textbbox((0, 0), title, font=font)
-            x = (self.width - (bbox[2] - bbox[0])) // 2
-            y = self.height // 2 - 50
-            color = tuple(int(c * alpha) for c in self.colors["accent"])
-            draw.text((x, y), title, fill=color, font=font)
-            return np.array(img)
-        return VideoClip(make_frame, duration=duration)
+НИША: {niche}
+ТЕМА: {topic}
 
-    def create_outro(self, duration=3):
-        def make_frame(t):
-            img = Image.new("RGB", (self.width, self.height), self.colors["background"])
-            draw = ImageDraw.Draw(img)
-            font = self._load_font(60)
-            text = "Подписывайтесь на канал!"
-            bbox = draw.textbbox((0, 0), text, font=font)
-            x = (self.width - (bbox[2] - bbox[0])) // 2
-            draw.text((x, self.height // 2), text, fill=self.colors["highlight"], font=font)
-            return np.array(img)
-        return VideoClip(make_frame, duration=duration)
+КРИТИЧЕСКИ ВАЖНО:
+1. Если в теме есть число (Топ-5, Топ-3) — назови РОВНО столько инструментов ПО ИМЕНАМ.
+2. Называть бренды (ChatGPT, Claude, Midjourney) РАЗРЕШЕНО И ОБЯЗАТЕЛЬНО.
+3. На КАЖДЫЙ инструмент — ОТДЕЛЬНЫЙ GROUP с его ИМЕНЕМ.
+4. Каждый инструмент раскрыт по схеме: ЧТО → ФУНКЦИИ → ЦЕНА → ПРИМЕР → МИНУС.
+5. Каждая сцена — 8-10 предложений.
+6. ЗАПРЕЩЕНЫ ФРАЗЫ: «сегодня мы поговорим», «в современном мире», «многие эксперты считают».
 
-    def assemble_video(self, script, audio_path, title, output_filename="final_video.mp4"):
-        print(f"\n🎬 Собираю видео...")
+ФОРМАТ (строго):
 
-        audio = AudioFileClip(audio_path) if audio_path and Path(audio_path).exists() else None
-        total_duration = audio.duration if audio else 30
+[SCENE 1]
+GROUP: intro
+VISUAL: 3-5 english words
+TEXT: Текст, 8-10 предложений.
 
-        scenes = self._parse_scenes(script)
-        scene_duration = total_duration / max(len(scenes), 1)
+[SCENE 2]
+GROUP: ChatGPT
+VISUAL: person typing laptop
+TEXT: Первое место — ChatGPT. Это...
 
-        clips = [self.create_intro(title, duration=3)]
+... и так далее, 15-25 сцен."""
 
-        for i, scene in enumerate(scenes):
-            img_path = self.fetcher.fetch(scene["group"], scene["visual"], index=i)
-            if img_path:
-                direction = random.choice(["in", "out"])
-                base = self._ken_burns(img_path, scene_duration, direction)
-                clip = self._add_text_overlay(base, scene["text"], title=title if i == 0 else "")
-            else:
-                clip = ColorClip(size=(self.width, self.height),
-                                 color=self.colors["background"],
-                                 duration=scene_duration)
-            clips.append(clip)
+        best_script = None
+        best_score = 0
+        feedback = ""
 
-        clips.append(self.create_outro(duration=3))
-        final_video = concatenate_videoclips(clips, method="compose")
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            print(f"\n   --- Попытка {attempt}/{MAX_ATTEMPTS} ---")
 
-        if audio:
-            if final_video.duration < audio.duration:
-                diff = audio.duration - final_video.duration
-                clips[-1] = clips[-1].set_duration(clips[-1].duration + diff)
-                final_video = concatenate_videoclips(clips, method="compose")
-            else:
-                final_video = final_video.subclip(0, audio.duration)
+            prompt = base_prompt
+            if feedback:
+                prompt += f"\n\nФИДБЕК ОТ РЕДАКТОРА (исправь в новой версии):\n{feedback}"
 
-            tracks = [audio]
-            if self.music_path.exists():
-                music = AudioFileClip(str(self.music_path)).volumex(self.music_volume)
-                if music.duration < final_video.duration:
-                    loops_needed = int(final_video.duration / music.duration) + 1
-                    music = concatenate_audioclips([music] * loops_needed)
-                music = music.subclip(0, final_video.duration)
-                tracks.append(music)
-                print(f"🎵 Музыка подмешана ({self.music_volume*100:.0f}%)")
-            else:
-                print("ℹ️ Фоновая музыка не найдена (background_music.mp3)")
+            script = self._generate(prompt)
+            if not script:
+                continue
 
-            final_video = final_video.set_audio(CompositeAudioClip(tracks))
+            score, verdict, feedback = self._judge(script)
+            print(f"   Оценка судьи: {score}/10 ({verdict})")
+            if feedback:
+                print(f"   Фидбек: {feedback[:100]}...")
 
-        output_path = self.output_dir / output_filename
-        final_video.write_videofile(
-            str(output_path),
-            fps=self.fps,
-            codec="libx264",
-            audio_codec="aac",
-            temp_audiofile="temp-audio.m4a",
-            remove_temp=True,
-        )
-        print(f"✅ Видео сохранено: {output_path}")
-        return str(output_path)
+            if score > best_score:
+                best_score = score
+                best_script = script
+
+            if score >= MIN_SCORE:
+                print(f"✅ Сценарий принят (оценка {score})")
+                return best_script
+
+            print(f"⚠️ Оценка ниже {MIN_SCORE}, перегенерирую с фидбеком...")
+
+        if best_script:
+            print(f"⚠️ Лучший результат: {best_score}/10 (после {MAX_ATTEMPTS} попыток)")
+            return best_script
+
+        print("❌ Не удалось сгенерировать сценарий")
+        return self._fallback_script(topic, niche)
+
+    def _fallback_script(self, topic, niche):
+        return f"""[SCENE 1]
+GROUP: intro
+VISUAL: person typing laptop
+TEXT: Привет! Разберём {topic}.
+
+[SCENE 2]
+GROUP: ChatGPT
+VISUAL: person typing laptop chat
+TEXT: Первое место — ChatGPT от OpenAI. Чат-бот на GPT-4, умеет писать тексты и код. Бесплатно с лимитами, Plus за 20$ в месяц. Кейс: копирайтер Сергей сократил время на статьи в 3 раза.
+
+[SCENE 3]
+GROUP: outro
+VISUAL: subscribe youtube button
+TEXT: Подписывайся, дальше будет больше.
+"""
+
+    def generate_title_and_description(self, script, niche):
+        print("\n🎬 Генерирую название и описание...")
+        if not self.client:
+            return {"title": f"{niche}: обзор", "description": script[:200], "tags": [niche]}
+
+        prompt = f"""Создай метаданные для YouTube по сценарию.
+
+НИША: {niche}
+СЦЕНАРИЙ: {script[:1500]}
+
+ФОРМАТ:
+НАЗВАНИЕ: до 60 символов с цифрой
+ОПИСАНИЕ: 100-200 слов
+ТЕГИ: тег1, тег2, ... (10 штук)"""
+
+        result = self._generate(prompt)
+        if not result:
+            return {"title": f"{niche}: обзор", "description": script[:200], "tags": [niche]}
+
+        title, description, tags = "", "", []
+        for line in result.split("\n"):
+            if line.startswith("НАЗВАНИЕ:"):
+                title = line.replace("НАЗВАНИЕ:", "").strip()
+            elif line.startswith("ОПИСАНИЕ:"):
+                description = line.replace("ОПИСАНИЕ:", "").strip()
+            elif line.startswith("ТЕГИ:"):
+                tags = [t.strip() for t in line.replace("ТЕГИ:", "").split(",") if t.strip()]
+
+        print(f"✅ Название: {title or niche}")
+        return {"title": title or f"{niche}: обзор", "description": description or script[:200], "tags": tags or [niche]}
