@@ -6,6 +6,10 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 MODEL = "openai/gpt-oss-120b"
 
+# Лимит бесплатного тарифа Groq — 8000 токенов/мин.
+# Безопасный размер промпта — 5000 символов (примерно 4000-5000 токенов).
+MAX_PROMPT_CHARS = 5000
+
 MAX_ATTEMPTS = 3
 MIN_SCORE = 7
 
@@ -15,6 +19,13 @@ class ScriptGenerator:
         self.client = OpenAI(base_url=GROQ_BASE_URL, api_key=GROQ_API_KEY) if GROQ_API_KEY else None
         if not self.client:
             print("⚠️  GROQ_API_KEY не задан — буду использовать шаблонные тексты.")
+        self.last_score = 0
+
+    def _truncate(self, text, max_chars=MAX_PROMPT_CHARS):
+        """Обрезает текст до безопасной длины."""
+        if len(text) <= max_chars:
+            return text
+        return text[:max_chars] + "\n\n[...текст обрезан...]"
 
     def _ask(self, role, prompt, temperature=0.7):
         try:
@@ -25,12 +36,65 @@ class ScriptGenerator:
                     {"role": "user", "content": prompt},
                 ],
                 temperature=temperature,
-                max_tokens=8000,
+                max_tokens=4000,
             )
             return r.choices[0].message.content
         except Exception as e:
-            print(f"⚠️ Groq ({role[:25]}...): {e}")
+            print(f"⚠️ Groq ({role[:25]}...): {str(e)[:150]}")
             return None
+
+    # ============ АВТОВЫБОР ТЕМЫ ============
+    def pick_best_topic(self, niche, recent_topics=None, recent_tools=None, best_topics=None):
+        print(f"\n🧠 Агент выбирает тему для ниши: {niche}")
+
+        recent_topics = recent_topics or []
+        recent_tools = recent_tools or []
+        best_topics = best_topics or []
+
+        role = "Ты — стратег YouTube-канала. Выбираешь темы, которые зайдут зрителям."
+        prompt = f"""Выбери ЛУЧШУЮ тему для YouTube-видео.
+
+НИША: {niche}
+
+УЖЕ ДЕЛАЛИ (не повторяйся):
+{chr(10).join(f"- {t}" for t in recent_topics[-10:]) if recent_topics else "ничего ещё"}
+
+ТЕМЫ С ВЫСОКОЙ ОЦЕНКОЙ:
+{chr(10).join(f"- {t}" for t in best_topics[-5:]) if best_topics else "нет данных"}
+
+ЗАДАЧА:
+1. Придумай 5 РАЗНЫХ тем для видео.
+2. Каждая тема — с ЧИСЛОМ (Топ-3, 5 способов).
+3. Выбери 1 лучшую.
+
+ФОРМАТ:
+ТЕМЫ:
+1. <тема>
+2. <тема>
+3. <тема>
+4. <тема>
+5. <тема>
+
+ЛУЧШАЯ: <номер>
+ПОЧЕМУ: <1 предложение>"""
+
+        result = self._ask(role, prompt, temperature=0.8)
+        if not result:
+            return "Топ-3 AI для копирайтеров"
+
+        topics = re.findall(r"^\d+\.\s*(.+)$", result, re.MULTILINE)
+        best_match = re.search(r"ЛУЧШАЯ:\s*(\d+)", result)
+        best_num = int(best_match.group(1)) if best_match else 1
+
+        if topics and 1 <= best_num <= len(topics):
+            chosen = topics[best_num - 1].strip()
+        elif topics:
+            chosen = topics[0].strip()
+        else:
+            chosen = "Топ-3 AI для копирайтеров"
+
+        print(f"   ✅ Выбрана тема: {chosen}")
+        return chosen
 
     # ============ РОЛЬ 1: РЕСЁРЧЕР ============
     def _research(self, topic, niche):
@@ -42,31 +106,34 @@ class ScriptGenerator:
 ТЕМА: {topic}
 
 Верни:
-1. 5-7 конкретных инструментов/сервисов с названиями и функциями
-2. Для каждого: примерная цена (если есть)
-3. 2-3 реальные цифры или статистики
-4. 1-2 типичных ошибки/минуса
+1. 5-7 инструментов с названиями
+2. Для каждого: цена (если есть)
+3. 2-3 цифры
+4. 1-2 минуса
 
-Только факты. Без воды."""
+Только факты. Без воды. Максимум 4000 символов."""
         return self._ask(role, prompt, temperature=0.4) or ""
 
     # ============ РОЛЬ 2: СЦЕНАРИСТ ============
     def _write(self, topic, niche, research, feedback=""):
         print("   ✍️ Сценарист пишет...")
         role = "Ты — опытный сценарист YouTube. Пишешь конкретно, без воды."
-        prompt = f"""Создай сценарий для YouTube-видео на основе исследований.
+        # Обрезаем ресёрч, чтобы не превысить лимит Groq
+        research_short = self._truncate(research, 1500)
+
+        prompt = f"""Создай сценарий YouTube-видео на основе исследований.
 
 НИША: {niche}
 ТЕМА: {topic}
 
-ИССЛЕДОВАНИЕ (используй эти факты):
-{research}
+ИССЛЕДОВАНИЕ:
+{research_short}
 
 КРИТИЧЕСКИ ВАЖНО:
-1. Если в теме число (Топ-3, Топ-5) — назови РОВНО столько инструментов ПО ИМЕНАМ.
+1. Если в теме число (Топ-3) — назови РОВНО столько инструментов ПО ИМЕНАМ.
 2. Каждый инструмент — ОТДЕЛЬНЫЙ GROUP с его ИМЕНЕМ.
 3. Схема: ЧТО → ФУНКЦИИ → ЦЕНА → ПРИМЕР → МИНУС.
-4. Каждая сцена — 8-10 предложений.
+4. Каждая сцена — 6-8 предложений.
 5. Запрещены: «сегодня мы поговорим», «в современном мире», «многие эксперты».
 
 ФОРМАТ:
@@ -74,40 +141,43 @@ class ScriptGenerator:
 [SCENE 1]
 GROUP: intro
 VISUAL: 3-5 english words
-TEXT: 8-10 предложений.
+TEXT: 6-8 предложений.
 
 [SCENE 2]
 GROUP: ChatGPT
 VISUAL: person typing laptop
 TEXT: Первое место — ChatGPT. Это...
 
-... и так далее, 15-25 сцен."""
+... и так далее, 12-18 сцен."""
 
         if feedback:
-            prompt += f"\n\nФИДБЕК ОТ КРИТИКА (исправь):\n{feedback}"
+            prompt += f"\n\nФИДБЕК (исправь):\n{self._truncate(feedback, 500)}"
 
         return self._ask(role, prompt) or ""
 
     # ============ РОЛЬ 3: КРИТИК ============
     def _critic(self, script):
         print("   🧐 Критик оценивает...")
-        role = "Ты — строгий редактор YouTube. Оцениваешь сценарии по критериям."
+        role = "Ты — строгий редактор YouTube."
+        # Критик получает только первые 4000 символов сценария
+        script_short = self._truncate(script, 4000)
+
         prompt = f"""Оцени сценарий по 5 критериям (каждый 1-10).
 
 СЦЕНАРИЙ:
-{script}
+{script_short}
 
 КРИТЕРИИ:
-1. НАЗВАНИЯ: инструменты названы по именам? (ChatGPT, Claude, Midjourney)
-2. ЦИФРЫ: есть цены, экономия времени, статистика?
-3. ПРИМЕРЫ: есть кейсы с именами людей?
+1. НАЗВАНИЯ: инструменты названы по именам?
+2. ЦИФРЫ: есть цены, статистика?
+3. ПРИМЕРЫ: есть кейсы с именами?
 4. МИНУСЫ: у каждого инструмента есть минус?
 5. ЧИСТОТА: нет фраз «в современном мире», «сегодня мы поговорим»?
 
 ФОРМАТ:
 ОЦЕНКА: <среднее 1-10>
 ВЕРДИКТ: <PASS если >= 7, FAIL если < 7>
-ФИДБЕК: <2-3 предложения, что улучшить>"""
+ФИДБЕК: <2 предложения>"""
 
         result = self._ask(role, prompt, temperature=0.3) or ""
         score, verdict, feedback = 5, "FAIL", ""
@@ -152,57 +222,68 @@ TEXT: Первое место — ChatGPT. Это...
                 break
             print(f"⚠️ Переделка с фидбеком...")
 
+        self.last_score = best_score
+
         if not best_script:
             return self._fallback_script(topic, niche)
 
         print(f"✅ Итог: {best_score}/10, {len(best_script)} символов")
         return best_script
 
-    # ============ РОЛЬ 4: ОТБОР СЦЕН ДЛЯ SHORTS ============
+    # ============ ОТБОР СЦЕН ДЛЯ SHORTS ============
     def select_best_scenes(self, script, count=4):
         print(f"\n🎯 Groq выбирает {count} лучших сцен для Shorts...")
         if not self.client:
             return []
 
         role = "Ты — эксперт по вирусному контенту YouTube Shorts."
-        prompt = f"""Выбери {count} САМЫХ ЦЕПЛЯЮЩИХ сцен из этого сценария для Shorts.
+        script_short = self._truncate(script, 4000)
+
+        prompt = f"""Выбери {count} САМЫХ ЦЕПЛЯЮЩИХ сцен.
 
 СЦЕНАРИЙ:
-{script}
+{script_short}
 
 КРИТЕРИИ:
-1. Есть конкретная цифра, факт или интрига.
-2. Понятна БЕЗ контекста других сцен.
-3. Вызывает эмоцию (удивление, желание узнать больше).
-4. Заканчивается на незавершённой мысли.
+1. Есть цифра или интрига.
+2. Понятна БЕЗ контекста.
 
-ВЕРНИ ТОЛЬКО НОМЕРА СЦЕН через запятую. Пример: 3, 7, 12, 18
-Без пояснений, только числа."""
+ВЕРНИ ТОЛЬКО НОМЕРА через запятую. Пример: 3, 7, 12, 18"""
 
         result = self._ask(role, prompt, temperature=0.3)
         if not result:
             return []
-
         nums = [int(n) for n in re.findall(r"\d+", result)]
         nums = [n for n in nums if 1 <= n <= 100][:count]
         print(f"   ✅ Выбраны сцены: {nums}")
         return nums
 
-    # ============ РОЛЬ 5: SEO-МАСТЕР ============
+    # ============ ИЗВЛЕЧЬ ИНСТРУМЕНТЫ ============
+    def extract_tools(self, script):
+        tools = set()
+        for m in re.finditer(r"GROUP:\s*(.+)", script):
+            g = m.group(1).strip()
+            if g.lower() not in ("intro", "outro") and len(g) < 30:
+                tools.add(g)
+        return sorted(tools)
+
+    # ============ SEO-МАСТЕР ============
     def generate_title_and_description(self, script, niche):
         print("\n🎬 SEO-мастер делает метаданные...")
         if not self.client:
             return {"title": f"{niche}: обзор", "description": script[:200], "tags": [niche]}
 
-        role = "Ты — SEO-специалист YouTube. Оптимизируешь метаданные под поиск."
-        prompt = f"""Создай метаданные для YouTube.
+        role = "Ты — SEO-специалист YouTube."
+        script_short = self._truncate(script, 3000)
+
+        prompt = f"""Создай метаданные YouTube.
 
 НИША: {niche}
-СЦЕНАРИЙ: {script[:2000]}
+СЦЕНАРИЙ: {script_short}
 
 ФОРМАТ:
-НАЗВАНИЕ: до 60 символов, с цифрой или интригой
-ОПИСАНИЕ: 150-200 слов с ключевыми словами
+НАЗВАНИЕ: до 60 символов
+ОПИСАНИЕ: 100-150 слов
 ТЕГИ: тег1, тег2, ... (10 штук)"""
 
         result = self._ask(role, prompt) or ""
@@ -227,7 +308,7 @@ TEXT: Привет! Разберём {topic}.
 [SCENE 2]
 GROUP: ChatGPT
 VISUAL: person typing laptop chat
-TEXT: Первое место — ChatGPT от OpenAI. Чат-бот на GPT-4. Бесплатно с лимитами, Plus за 20$ в месяц. Кейс: копирайтер Сергей сократил время в 3 раза.
+TEXT: Первое место — ChatGPT от OpenAI. Чат-бот на GPT-4. Бесплатно с лимитами, Plus за 20$ в месяц.
 
 [SCENE 3]
 GROUP: outro
