@@ -9,6 +9,7 @@ from pathlib import Path
 import textwrap
 import random
 import re
+import json
 
 from image_fetcher import ImageFetcher
 
@@ -92,6 +93,28 @@ class VideoGenerator:
             scenes = [{"group": "intro", "visual": "abstract background", "text": script[:500]}]
         return scenes
 
+    def _load_subtitles(self, audio_path):
+        """Загружает тайм-коды предложений из JSON рядом с аудио."""
+        if not audio_path:
+            return []
+        json_path = Path(audio_path).with_suffix(".json")
+        if not json_path.exists():
+            print("ℹ️ Тайм-коды не найдены, субтитры будут статичными")
+            return []
+        try:
+            with open(json_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"⚠️ Не удалось загрузить тайм-коды: {e}")
+            return []
+
+    def _find_current_sentence(self, subtitles, t):
+        """Какое предложение показывать в момент t."""
+        for s in subtitles:
+            if s["start"] <= t <= s["end"]:
+                return s["text"]
+        return None
+
     def _ken_burns(self, image_path, duration, direction="in"):
         try:
             img_clip = ImageClip(image_path).set_duration(duration)
@@ -114,10 +137,13 @@ class VideoGenerator:
         )
         return zoomed.set_duration(duration)
 
-    def _add_text_overlay(self, clip, text, title=""):
-        font = self._load_font(40)
-        title_font = self._load_font(54)
-        wrapped = textwrap.fill(text, width=60)
+    def _add_subtitle_overlay(self, clip, subtitles, global_start):
+        """
+        Накладывает субтитры. subtitles — список с абсолютными временами.
+        global_start — время, с которого начинается этот клип в общем видео.
+        Показываем ТОЛЬКО текущее предложение.
+        """
+        font = self._load_font(48)
         W, H = self.width, self.height
 
         def add_text(get_frame, t):
@@ -129,13 +155,29 @@ class VideoGenerator:
             img = Image.fromarray(frame).convert("RGBA")
             draw = ImageDraw.Draw(img)
 
-            overlay = Image.new("RGBA", (W, 320), (0, 0, 0, 170))
-            img.paste(overlay, (0, H - 320), overlay)
+            # Абсолютное время в общем видео
+            abs_t = global_start + t
+            text = self._find_current_sentence(subtitles, abs_t)
 
-            draw.multiline_text((60, H - 290), wrapped,
-                                fill=(255, 255, 255, 255), font=font, align="left")
-            if title:
-                draw.text((60, 50), title, fill=(0, 200, 255, 255), font=title_font)
+            if text:
+                # Внизу экрана — плашка с текущим предложением
+                wrapped = textwrap.fill(text, width=55)
+                bbox = draw.multiline_textbbox((0, 0), wrapped, font=font, align="center")
+                text_w = bbox[2] - bbox[0]
+                text_h = bbox[3] - bbox[1]
+
+                pad = 30
+                box_w = text_w + pad * 2
+                box_h = text_h + pad * 2
+                box_x = (W - box_w) // 2
+                box_y = H - box_h - 80
+
+                # Полупрозрачная подложка
+                overlay = Image.new("RGBA", (box_w, box_h), (0, 0, 0, 190))
+                img.paste(overlay, (box_x, box_y), overlay)
+
+                draw.multiline_text((box_x + pad, box_y + pad), wrapped,
+                                    fill=(255, 255, 255, 255), font=font, align="center")
 
             return np.array(img.convert("RGB"))
 
@@ -173,22 +215,31 @@ class VideoGenerator:
         audio = AudioFileClip(audio_path) if audio_path and Path(audio_path).exists() else None
         total_duration = audio.duration if audio else 30
 
+        subtitles = self._load_subtitles(audio_path)
+        if subtitles:
+            print(f"📝 Загружено {len(subtitles)} предложений для субтитров")
+
         scenes = self._parse_scenes(script)
         scene_duration = total_duration / max(len(scenes), 1)
 
         clips = [self.create_intro(title, duration=3)]
+
+        # global_start накапливаем: intro (3 сек) + предыдущие сцены
+        global_start = 3.0
 
         for i, scene in enumerate(scenes):
             img_path = self.fetcher.fetch(scene["visual"], index=i)
             if img_path:
                 direction = random.choice(["in", "out"])
                 base = self._ken_burns(img_path, scene_duration, direction)
-                clip = self._add_text_overlay(base, scene["text"], title=title if i == 0 else "")
+                clip = self._add_subtitle_overlay(base, subtitles, global_start)
             else:
                 clip = ColorClip(size=(self.width, self.height),
                                  color=self.colors["background"],
                                  duration=scene_duration)
+                clip = self._add_subtitle_overlay(clip, subtitles, global_start)
             clips.append(clip)
+            global_start += scene_duration
 
         clips.append(self.create_outro(duration=3))
         final_video = concatenate_videoclips(clips, method="compose")
@@ -288,11 +339,9 @@ class VideoGenerator:
             img_clip = ImageClip(image_path).set_duration(duration)
         except Exception:
             return ColorClip(size=(W, H), color=self.colors["background"], duration=duration)
-
         img_clip = img_clip.resize(height=H)
         if img_clip.w < W:
             img_clip = img_clip.resize(width=W)
-
         zoomed = img_clip.resize(lambda t: 1 + 0.15 * (t / duration))
         zoomed = zoomed.crop(
             x_center=zoomed.w / 2,
@@ -314,12 +363,9 @@ class VideoGenerator:
                 frame = frame[..., :3]
             img = Image.fromarray(frame).convert("RGBA")
             draw = ImageDraw.Draw(img)
-
             overlay = Image.new("RGBA", (W, 500), (0, 0, 0, 180))
             img.paste(overlay, (0, H - 500), overlay)
-
             draw.multiline_text((40, H - 470), wrapped,
                                 fill=(255, 255, 255, 255), font=font, align="left")
             return np.array(img.convert("RGB"))
-
         return clip.fl(add_text)
