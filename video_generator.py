@@ -94,12 +94,11 @@ class VideoGenerator:
         return scenes
 
     def _load_subtitles(self, audio_path):
-        """Загружает тайм-коды предложений из JSON рядом с аудио."""
         if not audio_path:
             return []
         json_path = Path(audio_path).with_suffix(".json")
         if not json_path.exists():
-            print("ℹ️ Тайм-коды не найдены, субтитры будут статичными")
+            print("ℹ️ Тайм-коды не найдены, субтитры будут пустыми")
             return []
         try:
             with open(json_path, "r", encoding="utf-8") as f:
@@ -109,7 +108,6 @@ class VideoGenerator:
             return []
 
     def _find_current_sentence(self, subtitles, t):
-        """Какое предложение показывать в момент t."""
         for s in subtitles:
             if s["start"] <= t <= s["end"]:
                 return s["text"]
@@ -138,11 +136,6 @@ class VideoGenerator:
         return zoomed.set_duration(duration)
 
     def _add_subtitle_overlay(self, clip, subtitles, global_start):
-        """
-        Накладывает субтитры. subtitles — список с абсолютными временами.
-        global_start — время, с которого начинается этот клип в общем видео.
-        Показываем ТОЛЬКО текущее предложение.
-        """
         font = self._load_font(48)
         W, H = self.width, self.height
 
@@ -155,12 +148,10 @@ class VideoGenerator:
             img = Image.fromarray(frame).convert("RGBA")
             draw = ImageDraw.Draw(img)
 
-            # Абсолютное время в общем видео
             abs_t = global_start + t
             text = self._find_current_sentence(subtitles, abs_t)
 
             if text:
-                # Внизу экрана — плашка с текущим предложением
                 wrapped = textwrap.fill(text, width=55)
                 bbox = draw.multiline_textbbox((0, 0), wrapped, font=font, align="center")
                 text_w = bbox[2] - bbox[0]
@@ -172,7 +163,6 @@ class VideoGenerator:
                 box_x = (W - box_w) // 2
                 box_y = H - box_h - 80
 
-                # Полупрозрачная подложка
                 overlay = Image.new("RGBA", (box_w, box_h), (0, 0, 0, 190))
                 img.paste(overlay, (box_x, box_y), overlay)
 
@@ -223,12 +213,11 @@ class VideoGenerator:
         scene_duration = total_duration / max(len(scenes), 1)
 
         clips = [self.create_intro(title, duration=3)]
-
-        # global_start накапливаем: intro (3 сек) + предыдущие сцены
         global_start = 3.0
 
         for i, scene in enumerate(scenes):
-            img_path = self.fetcher.fetch(scene["visual"], index=i)
+            # ВАЖНО: передаём оба аргумента — group и visual
+            img_path = self.fetcher.fetch(scene["group"], scene["visual"], index=i)
             if img_path:
                 direction = random.choice(["in", "out"])
                 base = self._ken_burns(img_path, scene_duration, direction)
@@ -262,7 +251,7 @@ class VideoGenerator:
                 tracks.append(music)
                 print(f"🎵 Музыка подмешана ({self.music_volume*100:.0f}%)")
             else:
-                print("ℹ️ Фоновая музыка не найдена (background_music.mp3)")
+                print("ℹ️ Фоновая музыка не найдена")
 
             final_video = final_video.set_audio(CompositeAudioClip(tracks))
 
@@ -300,7 +289,6 @@ class VideoGenerator:
             shorts_duration = min(60, audio.duration)
             shorts_audio = audio.subclip(0, shorts_duration)
         else:
-            audio = None
             shorts_duration = 60
             shorts_audio = None
 
@@ -308,7 +296,7 @@ class VideoGenerator:
 
         clips = []
         for i, scene in enumerate(selected):
-            img_path = self.fetcher.fetch(scene["visual"], index=1000 + i)
+            img_path = self.fetcher.fetch(scene["group"], scene["visual"], index=1000 + i)
             if img_path:
                 clip = self._ken_burns_shorts(img_path, scene_duration, SHORTS_W, SHORTS_H)
                 clip = self._add_text_overlay_shorts(clip, scene["text"], SHORTS_W, SHORTS_H)
