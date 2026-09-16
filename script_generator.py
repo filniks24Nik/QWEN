@@ -15,7 +15,7 @@ class ScriptGenerator:
     def __init__(self):
         self.client = OpenAI(base_url=GROQ_BASE_URL, api_key=GROQ_API_KEY) if GROQ_API_KEY else None
         if not self.client:
-            print("⚠️  GROQ_API_KEY не задан — буду использовать шаблонные тексты.")
+            print("⚠️  GROQ_API_KEY не задан.")
         self.last_score = 0
 
     def _truncate(self, text, max_chars=MAX_PROMPT_CHARS):
@@ -41,22 +41,17 @@ class ScriptGenerator:
 
     # ============ АВТОВЫБОР ТЕМЫ ============
     def pick_best_topic(self, niche, recent_topics=None, best_topics=None):
-        print(f"\n🧠 Агент выбирает тему для ниши: {niche}")
+        print(f"\n🧠 Агент выбирает тему: {niche}")
         recent_topics = recent_topics or []
         best_topics = best_topics or []
 
-        role = "Ты — стратег YouTube Shorts. Выбираешь темы, которые залетают."
-        prompt = f"""Выбери ЛУЧШУЮ тему для YouTube Shorts (60 секунд).
+        role = "Ты — стратег YouTube Shorts."
+        prompt = f"""Выбери ЛУЧШУЮ тему для Shorts (60 секунд).
 
 НИША: {niche}
+УЖЕ ДЕЛАЛИ: {", ".join(recent_topics[-10:]) if recent_topics else "ничего"}
 
-УЖЕ ДЕЛАЛИ (не повторяйся):
-{chr(10).join(f"- {t}" for t in recent_topics[-10:]) if recent_topics else "ничего ещё"}
-
-ЗАДАЧА:
-1. Придумай 5 РАЗНЫХ тем (не пересекайся).
-2. Каждая тема — с ЧИСЛОМ (Топ-3, 5 ошибок).
-3. Выбери 1 лучшую.
+ЗАДАЧА: придумай 5 тем с ЧИСЛОМ (Топ-3, 5 ошибок), выбери 1 лучшую.
 
 ФОРМАТ:
 ТЕМЫ:
@@ -70,39 +65,46 @@ class ScriptGenerator:
 
         result = self._ask(role, prompt, temperature=0.8)
         if not result:
-            return "Топ-3 AI для копирайтеров"
+            return "Топ-3 AI инструмента для работы"
 
         topics = re.findall(r"^\d+\.\s*(.+)$", result, re.MULTILINE)
         m = re.search(r"ЛУЧШАЯ:\s*(\d+)", result)
         n = int(m.group(1)) if m else 1
-        chosen = topics[n - 1].strip() if topics and 1 <= n <= len(topics) else (topics[0].strip() if topics else "Топ-3 AI для копирайтеров")
-        print(f"   ✅ Выбрана тема: {chosen}")
+        chosen = topics[n - 1].strip() if topics and 1 <= n <= len(topics) else (topics[0].strip() if topics else "Топ-3 AI инструмента")
+        print(f"   ✅ Тема: {chosen}")
         return chosen
 
     # ============ РЕСЁРЧЕР ============
     def _research(self, topic, niche):
         print("   🔍 Ресёрчер ищет факты...")
-        role = "Ты — исследователь. Собираешь конкретные факты."
-        prompt = f"""Собери 4-6 конкретных фактов по теме для Shorts.
+        role = "Ты — исследователь технологий."
+        prompt = f"""Собери факты про РЕАЛЬНО СУЩЕСТВУЮЩИЕ AI-инструменты.
 
 НИША: {niche}
 ТЕМА: {topic}
 
-Верни:
-1. 4-6 инструментов/фактов с названиями
-2. Цены (если есть)
-3. 1-2 цифры
+ВАЖНО: используй ТОЛЬКО реальные инструменты, которые есть на рынке:
+ChatGPT, Claude, Gemini, Midjourney, Perplexity, Runway, Synthesia,
+ElevenLabs, Notion AI, Copy.ai, Jasper, Leonardo AI, Suno, HeyGen.
 
-Только факты. Без воды. Максимум 2000 символов."""
-        return self._ask(role, prompt, temperature=0.4) or ""
+НЕ ПРИДУМЫВАЙ новые названия! Если не знаешь точного — не пиши.
+
+Верни:
+1. 3-5 РЕАЛЬНЫХ инструментов с названиями
+2. Для каждого: цена (бесплатно / от X$/мес)
+3. 1-2 цифры (пользователи, экономия времени)
+4. 1 минус у каждого
+
+Максимум 2000 символов."""
+        return self._ask(role, prompt, temperature=0.3) or ""
 
     # ============ СЦЕНАРИСТ SHORTS ============
     def _write_shorts(self, topic, niche, research, feedback=""):
-        print("   ✍️ Сценарист пишет короткий сценарий...")
-        role = "Ты — сценарист YouTube Shorts. Пишешь очень коротко и цепляюще."
+        print("   ✍️ Сценарист пишет...")
+        role = "Ты — сценарист YouTube Shorts. Очень коротко и цепляюще."
         research_short = self._truncate(research, 1500)
 
-        prompt = f"""Создай сценарий для YouTube Shorts (60 секунд, 4-6 сцен).
+        prompt = f"""Создай сценарий для YouTube Shorts (60-80 секунд).
 
 НИША: {niche}
 ТЕМА: {topic}
@@ -111,32 +113,40 @@ class ScriptGenerator:
 {research_short}
 
 ЖЁСТКИЕ ПРАВИЛА:
-1. РОВНО 4-6 сцен. Не больше, не меньше.
-2. Каждая сцена — РОВНО 1-2 предложения. НЕ БОЛЬШЕ.
-3. Каждое предложение — с фактом, цифрой или интригой.
-4. НИКАКОЙ ВОДЫ. Запрещены: «сегодня мы поговорим», «в современном мире», «многие эксперты», «стоит отметить», «это очень важно», «как вы знаете».
-5. Если в теме число (Топ-3) — назови РОВНО столько инструментов ПО ИМЕНАМ.
-6. Первая сцена — сразу крючок: цифра или вопрос.
-7. Последняя сцена — призыв подписаться (1 предложение).
+1. РОВНО 5 сцен: 1 крючок + 3 инструмента + 1 финал.
+2. В КАЖДОЙ сцене — РОВНО 2-3 предложения. Не больше 3! Не меньше 2!
+3. Только РЕАЛЬНЫЕ инструменты из исследования.
+4. НЕ ПРИДУМЫВАЙ новые названия инструментов!
+5. В каждой сцене про инструмент — ЕГО ИМЯ, ЦЕНА, ПРИМЕР.
+6. ЗАПРЕЩЕНЫ фразы: «сегодня мы поговорим», «в современном мире», «многие эксперты», «стоит отметить», «не секрет, что», «как вы знаете», «важно понимать».
+7. Первое предложение первой сцены — СРАЗУ цифра или вопрос (крючок).
 
 ФОРМАТ (строго):
 
 [SCENE 1]
 GROUP: intro
 VISUAL: 3-5 english words
-TEXT: Одно короткое предложение с цифрой.
+TEXT: Два предложения с цифрой или вопросом.
 
 [SCENE 2]
-GROUP: ChatGPT
-VISUAL: person typing laptop
-TEXT: Одно предложение. ChatGPT: ...
+GROUP: <название инструмента>
+VISUAL: 3-5 english words
+TEXT: Два-три предложения. Имя инструмента — в начале.
 
 [SCENE 3]
-GROUP: Midjourney
-VISUAL: digital art painting
-TEXT: Одно предложение. Midjourney: ...
+GROUP: <название инструмента>
+VISUAL: ...
+TEXT: Два-три предложения.
 
-... и так далее, 4-6 сцен.
+[SCENE 4]
+GROUP: <название инструмента>
+VISUAL: ...
+TEXT: Два-три предложения.
+
+[SCENE 5]
+GROUP: outro
+VISUAL: subscribe button
+TEXT: Одно предложение — призыв подписаться.
 
 ВЕРНИ ТОЛЬКО СЦЕНЫ."""
 
@@ -145,27 +155,30 @@ TEXT: Одно предложение. Midjourney: ...
 
         return self._ask(role, prompt) or ""
 
-    # ============ КРИТИК ============
+    # ============ КРИТИК SHORTS ============
     def _critic_shorts(self, script):
         print("   🧐 Критик проверяет...")
         role = "Ты — строгий редактор YouTube Shorts."
         script_short = self._truncate(script, 3000)
 
-        prompt = f"""Оцени сценарий Shorts по критериям (каждый 1-10).
+        prompt = f"""Оцени сценарий Shorts (каждый критерий 1-10).
 
 СЦЕНАРИЙ:
 {script_short}
 
 КРИТЕРИИ:
-1. КОРОТКОСТЬ: каждая сцена 1-2 предложения? (да — 10, 3+ — 1)
-2. КОНКРЕТИКА: есть названия, цифры, цены?
-3. НЕТ ВОДЫ: нет «сегодня мы поговорим», «в современном мире», «многие эксперты»?
-4. СЦЕН: ровно 4-6?
-5. КРЮЧОК: первая сцена сразу цепляет?
+1. КОРОТКОСТЬ: каждая сцена РОВНО 2-3 предложения?
+   (2-3 предложения — это ХОРОШО, ставь 9-10. НЕ требуй больше.)
+2. КОНКРЕТИКА: есть названия РЕАЛЬНЫХ инструментов, цены, цифры?
+3. НЕТ ВОДЫ: нет «сегодня мы поговорим», «в современном мире»?
+4. СЦЕН РОВНО 5?
+5. КРЮЧОК: первая сцена сразу цепляет цифрой или вопросом?
+
+ВАЖНО: короткий текст — это НЕ минус, а плюс для Shorts.
 
 ФОРМАТ:
 ОЦЕНКА: <среднее 1-10>
-ВЕРДИКТ: <PASS или FAIL>
+ВЕРДИКТ: <PASS если >= 7, FAIL если < 7>
 ФИДБЕК: <2 предложения>"""
 
         result = self._ask(role, prompt, temperature=0.3) or ""
@@ -182,15 +195,15 @@ TEXT: Одно предложение. Midjourney: ...
                 feedback = line.replace("ФИДБЕК:", "").strip()
         return score, verdict, feedback
 
-    # ============ ГЛАВНЫЙ ЦИКЛ SHORTS ============
+    # ============ ГЛАВНЫЙ ЦИКЛ ============
     def generate_shorts_script(self, topic, niche):
-        print(f"\n📝 Генерирую короткий сценарий для: {topic}")
+        print(f"\n📝 Генерирую сценарий: {topic}")
         if not self.client:
             return self._fallback_script(topic, niche)
 
         research = self._research(topic, niche)
         if research:
-            print(f"   ✅ Ресёрч собран ({len(research)} символов)")
+            print(f"   ✅ Ресёрч ({len(research)} символов)")
 
         best_script = None
         best_score = 0
@@ -207,7 +220,7 @@ TEXT: Одно предложение. Midjourney: ...
                 best_score = score
                 best_script = script
             if score >= MIN_SCORE:
-                print(f"✅ Сценарий принят (оценка {score})")
+                print(f"✅ Принят (оценка {score})")
                 break
             print(f"⚠️ Переделка...")
 
@@ -218,7 +231,6 @@ TEXT: Одно предложение. Midjourney: ...
         print(f"✅ Итог: {best_score}/10, {len(best_script)} символов")
         return best_script
 
-    # ============ ИЗВЛЕЧЬ ИНСТРУМЕНТЫ ============
     def extract_tools(self, script):
         tools = set()
         for m in re.finditer(r"GROUP:\s*(.+)", script):
@@ -227,14 +239,13 @@ TEXT: Одно предложение. Midjourney: ...
                 tools.add(g)
         return sorted(tools)
 
-    # ============ SEO ============
     def generate_title_and_description(self, script, niche):
         print("\n🎬 SEO-мастер делает метаданные...")
         if not self.client:
-            return {"title": f"{niche}: обзор", "description": script[:200], "tags": [niche]}
+            return {"title": f"{niche}", "description": script[:200], "tags": [niche]}
 
         role = "Ты — SEO-специалист YouTube Shorts."
-        prompt = f"""Создай метаданные для YouTube Shorts.
+        prompt = f"""Создай метаданные для Shorts.
 
 НИША: {niche}
 СЦЕНАРИЙ: {self._truncate(script, 2000)}
@@ -255,26 +266,31 @@ TEXT: Одно предложение. Midjourney: ...
                 tags = [t.strip() for t in line.replace("ТЕГИ:", "").split(",") if t.strip()]
 
         print(f"✅ Название: {title or niche}")
-        return {"title": title or f"{niche}: обзор", "description": description or script[:200], "tags": tags or [niche]}
+        return {"title": title or f"{niche}", "description": description or script[:200], "tags": tags or [niche]}
 
     def _fallback_script(self, topic, niche):
         return f"""[SCENE 1]
 GROUP: intro
-VISUAL: person typing laptop
-TEXT: 70% людей теряют 3 часа в день на рутину.
+VISUAL: fast numbers countdown
+TEXT: 70% людей теряют 3 часа в день на рутину. Вот 3 AI, которые это исправят.
 
 [SCENE 2]
 GROUP: ChatGPT
 VISUAL: person typing laptop chat
-TEXT: ChatGPT от OpenAI — бесплатно, плюс 20$ в месяц за Plus.
+TEXT: ChatGPT от OpenAI — бесплатно, Plus за 20$ в месяц. Пишет тексты и код в 3 раза быстрее.
 
 [SCENE 3]
 GROUP: Midjourney
-VISUAL: digital art painting
-TEXT: Midjourney делает обложку за 5 минут, от 10$ в месяц.
+VISUAL: digital art painting colorful
+TEXT: Midjourney делает обложку за 5 минут, от 10$ в месяц. Дизайнеры экономят 2 часа на каждой.
 
 [SCENE 4]
+GROUP: Notion AI
+VISUAL: notebook organizer screen
+TEXT: Notion AI ведёт заметки и планирует день. 10$ в месяц — экономит час в день.
+
+[SCENE 5]
 GROUP: outro
-VISUAL: subscribe button
-TEXT: Подписывайся — дальше больше.
+VISUAL: subscribe button animation
+TEXT: Подписывайся — дальше больше AI-лайфхаков.
 """
