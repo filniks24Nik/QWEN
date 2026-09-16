@@ -31,12 +31,13 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
-          pip install edge-tts requests openai
+          pip install edge-tts requests openai gTTS
 
       - name: Run factory
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
         run: |
           python main.py create "${{ github.event.inputs.niche }}" "${{ github.event.inputs.topic }}"
 
