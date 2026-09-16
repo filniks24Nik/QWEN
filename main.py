@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-YouTube Content Factory - Автоматическая фабрика контента
+YouTube Shorts Factory - только вертикальные Shorts
 """
 
 import sys
@@ -13,10 +13,7 @@ from niche_analyzer import NicheAnalyzer
 from script_generator import ScriptGenerator
 from voice_generator import VoiceGenerator
 from video_generator import VideoGenerator
-
-
-def check_setup():
-    pass
+from history_manager import HistoryManager
 
 
 class YouTubeFactory:
@@ -25,72 +22,76 @@ class YouTubeFactory:
         self.script_generator = ScriptGenerator()
         self.voice_generator = VoiceGenerator()
         self.video_generator = VideoGenerator()
+        self.history = HistoryManager()
 
         self.data_dir = Path("data")
         self.data_dir.mkdir(exist_ok=True)
 
-    def run_full_pipeline(self, niche=None, topic=None):
+    def run_shorts_pipeline(self, niche=None, topic=None):
         print("\n" + "="*60)
-        print("🚀 YOUTUBE CONTENT FACTORY")
+        print("🚀 YOUTUBE SHORTS FACTORY")
         print("="*60)
 
         if not niche:
             print("\n📊 ШАГ 1: Анализ ниш")
-            recommendations = self.niche_analyzer.recommend_niches(top_n=3)
-            if recommendations:
-                niche = recommendations[0]["niche"]
-                print(f"\n✅ Выбрана ниша: {niche}")
+            recs = self.niche_analyzer.recommend_niches(top_n=3)
+            if recs:
+                niche = recs[0]["niche"]
+                print(f"\n✅ Ниша: {niche}")
             else:
                 print("❌ Не удалось определить нишу")
                 return
 
         if not topic:
-            topic = self._generate_topic(niche)
+            print(f"\n🧠 ШАГ 2: Автовыбор темы")
+            recent = self.history.get_recent_topics(limit=20)
+            best = self.history.get_best_topics(min_score=8, limit=10)
+            print(f"   📚 История: {len(recent)} тем")
+            topic = self.script_generator.pick_best_topic(niche, recent, best)
 
-        print(f"\n📝 ШАГ 2: Генерация сценария")
+        print(f"\n📝 ШАГ 3: Генерация сценария")
         print(f"Тема: {topic}")
 
-        script = self.script_generator.generate_script(topic, niche, duration_minutes=10)
+        script = self.script_generator.generate_shorts_script(topic, niche)
+        score = self.script_generator.last_score
+        tools = self.script_generator.extract_tools(script)
+        print(f"🔧 Инструменты: {', '.join(tools)}")
+
         metadata = self.script_generator.generate_title_and_description(script, niche)
 
-        print(f"\n🎤 ШАГ 3: Генерация озвучки")
+        print(f"\n🎤 ШАГ 4: Озвучка")
         audio_path = self.voice_generator.generate_voice(
             script,
             filename=f"audio_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp3"
         )
 
-        # ШАГ 4: Длинное видео
-        print(f"\n🎬 ШАГ 4: Создание длинного видео")
-        video_path = self.video_generator.assemble_video(
+        print(f"\n📱 ШАГ 5: Сборка Shorts")
+        shorts_path = self.video_generator.assemble_shorts(
             script,
             audio_path,
             metadata["title"],
-            output_filename=f"video_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4"
+            output_filename=f"shorts_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4"
         )
 
-        # ШАГ 5: Shorts
-        print(f"\n📱 ШАГ 5: Создание Shorts")
-        best_scenes = self.script_generator.select_best_scenes(script, count=4)
-        shorts_path = None
-        if best_scenes:
-            shorts_path = self.video_generator.assemble_shorts(
-                script,
-                best_scenes,
-                audio_path,
-                metadata["title"],
-                output_filename=f"shorts_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4"
-            )
+        self.history.add_entry(
+            niche=niche,
+            topic=topic,
+            score=score,
+            tools=tools,
+            video_path=shorts_path,
+        )
 
         result = {
             "timestamp": datetime.now().isoformat(),
             "niche": niche,
             "topic": topic,
+            "score": score,
+            "tools": tools,
             "title": metadata["title"],
             "description": metadata["description"],
             "tags": metadata["tags"],
             "script": script,
             "audio_path": audio_path,
-            "video_path": video_path,
             "shorts_path": shorts_path,
         }
 
@@ -101,49 +102,23 @@ class YouTubeFactory:
         print("\n" + "="*60)
         print("✅ ГОТОВО!")
         print("="*60)
-        print(f"\n📹 Видео: {video_path}")
-        if shorts_path:
-            print(f"📱 Shorts: {shorts_path}")
+        print(f"\n📱 Shorts: {shorts_path}")
         print(f"🎵 Аудио: {audio_path}")
-        print(f"📄 Метаданные: {result_file}")
+        print(f"⭐ Оценка: {score}/10")
+        print(f"🔧 Инструменты: {', '.join(tools)}")
         print(f"\n🎯 Название: {metadata['title']}")
 
         return result
 
-    def _generate_topic(self, niche):
-        topics_by_niche = {
-            "Персональные финансы": [
-                "Как накопить первый миллион за год",
-                "5 ошибок новичков в инвестициях",
-                "Пассивный доход: реальные способы",
-            ],
-            "AI инструменты и автоматизация": [
-                "Топ-3 AI для копирайтеров",
-                "Как автоматизировать рутину с помощью AI",
-                "AI для контент-мейкеров: полный гайд",
-            ],
-            "Заработок онлайн": [
-                "Фриланс в 2026: с чего начать",
-                "Партнерский маркетинг для новичков",
-            ],
-        }
-        import random
-        topics = topics_by_niche.get(niche, ["Интересная тема в этой нише"])
-        return random.choice(topics)
-
     def analyze_and_recommend(self):
-        print("\n📊 АНАЛИЗ НИШ ДЛЯ YOUTUBE 2026")
-        print("="*60)
-        recommendations = self.niche_analyzer.recommend_niches(top_n=5)
-        print("\n💡 РЕКОМЕНДАЦИЯ:")
-        if recommendations:
-            best = recommendations[0]
-            print(f"Лучшая ниша: {best['niche']}")
-        return recommendations
+        print("\n📊 АНАЛИЗ НИШ")
+        recs = self.niche_analyzer.recommend_niches(top_n=5)
+        if recs:
+            print(f"Лучшая ниша: {recs[0]['niche']}")
+        return recs
 
 
 def main():
-    check_setup()
     factory = YouTubeFactory()
 
     if len(sys.argv) > 1:
@@ -153,22 +128,11 @@ def main():
         elif command == "create":
             niche = sys.argv[2] if len(sys.argv) > 2 else None
             topic = sys.argv[3] if len(sys.argv) > 3 else None
-            factory.run_full_pipeline(niche, topic)
+            factory.run_shorts_pipeline(niche, topic)
         else:
             print("Команды: analyze | create")
     else:
-        print("\n🎬 YOUTUBE CONTENT FACTORY")
-        print("="*60)
-        print("\n1. Анализ ниш")
-        print("2. Создать видео")
-        print("3. Выход")
-        choice = input("\nВаш выбор (1-3): ").strip()
-        if choice == "1":
-            factory.analyze_and_recommend()
-        elif choice == "2":
-            factory.run_full_pipeline()
-        else:
-            print("До свидания!")
+        factory.run_shorts_pipeline()
 
 
 if __name__ == "__main__":
