@@ -1,15 +1,23 @@
+import os
 import time
 import hashlib
 import requests
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
 
+PEXELS_API_KEY = os.getenv("PEXELS_API_KEY", "")
+
 
 class ImageFetcher:
     """
     Ищет картинки:
-    1. Если задан group (инструмент) — сначала пробуем найти логотип/скриншот через Wikipedia.
-    2. Потом ищем по visual через Wikimedia Commons (с fallback 5→1 слово).
+    1. Если задан group (инструмент) — сначала пробуем найти логотип через Wikipedia
+       (хорошо работает для известных брендов: ChatGPT, Claude, Midjourney и т.п.)
+    2. Основной источник для VISUAL-сцен — Pexels (настоящий стоковый фотобанк,
+       в отличие от Wikimedia Commons понимает обычные бытовые запросы вроде
+       "человек печатает на ноутбуке" и на русском, и на английском).
+    3. Если Pexels недоступен (нет ключа/лимит) — резервный fallback на
+       Wikimedia Commons, чтобы видео всё равно собралось.
     """
 
     def __init__(self):
@@ -21,7 +29,10 @@ class ImageFetcher:
         })
         self._last_request_time = 0.0
 
-    def _wait(self, seconds=1.0):
+        if not PEXELS_API_KEY:
+            print("⚠️  PEXELS_API_KEY не задан — буду сразу использовать резервный Wikimedia (хуже качество картинок)")
+
+    def _wait(self, seconds=0.5):
         elapsed = time.time() - self._last_request_time
         if elapsed < seconds:
             time.sleep(seconds - elapsed)
@@ -40,37 +51,66 @@ class ImageFetcher:
     def fetch(self, group, visual, index=0):
         """group — имя инструмента (ChatGPT) или тема (intro).
         visual — конкретный образ сцены."""
-        # Кэш по обоим ключам
         cache_key = f"{group}__{visual}"
         cached = self._cache_path(cache_key, index)
         if cached.exists() and cached.stat().st_size > 1000:
             print(f"📦 Из кэша: {group} / {visual}")
             return str(cached)
 
-        # 1. Логотип инструмента через Wikipedia
+        # 1. Логотип инструмента через Wikipedia (для известных брендов)
         if group and group.lower() not in ("intro", "outro"):
             url = self._wikipedia_logo(group)
             if url and self._download(url, cached):
                 print(f"✅ Wikipedia logo: {group}")
                 return str(cached)
 
-        # 2. Локальный visual через Wikimedia Commons (fallback 5→1 слово)
+        # 2. Основной источник — Pexels
+        if PEXELS_API_KEY:
+            url = self._pexels(visual, index)
+            if url and self._download(url, cached):
+                print(f"✅ Pexels: {visual}")
+                return str(cached)
+
+        # 3. Резервный вариант — Wikimedia Commons (fallback 5→1 слово)
         words = visual.split()
         for n in range(min(5, len(words)), 0, -1):
             short_query = " ".join(words[:n])
             url = self._wikimedia_with_retry(short_query, index)
             if url and self._download(url, cached):
-                print(f"✅ Wikimedia ({n} сл.): {short_query}")
+                print(f"✅ Wikimedia ({n} сл., резерв): {short_query}")
                 return str(cached)
 
         print(f"❌ Ничего не найдено: {group} / {visual}")
         return None
 
+    def _pexels(self, query, index=0):
+        """Ищет фото на Pexels по запросу (понимает и русский, и английский)."""
+        try:
+            self._wait(0.4)
+            r = self.session.get(
+                "https://api.pexels.com/v1/search",
+                headers={"Authorization": PEXELS_API_KEY},
+                params={"query": query, "per_page": 10, "orientation": "landscape"},
+                timeout=30,
+            )
+            if r.status_code == 429:
+                print("⚠️ Pexels: превышен лимит запросов")
+                return None
+            r.raise_for_status()
+            photos = r.json().get("photos", [])
+            if not photos:
+                return None
+            photo = photos[index % len(photos)]
+            src = photo.get("src", {})
+            return src.get("large2x") or src.get("large") or src.get("original")
+        except Exception as e:
+            print(f"⚠️ Pexels: {e}")
+            return None
+
     def _wikipedia_logo(self, tool_name):
-        """Ищет основное изображение статьи Wikipedia (обычно это логотип/скриншот)."""
         for lang in ("en", "ru"):
             try:
-                self._wait(1.0)
+                self._wait(0.5)
                 r = self.session.get(
                     f"https://{lang}.wikipedia.org/w/api.php",
                     params={
