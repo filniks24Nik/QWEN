@@ -60,8 +60,18 @@ class VideoGenerator:
         return font
 
     def _parse_scenes(self, script):
+        """Разбирает сценарий на сцены. Устойчиво к тому, что LLM иногда
+        оформляет лейблы жирным markdown (**GROUP:** вместо GROUP:)."""
         scenes = []
         blocks = re.split(r"\[SCENE\s*\d+\]", script, flags=re.IGNORECASE)
+
+        def strip_label(s, label):
+            pattern = r"^\*{0,2}_{0,2}\s*" + label + r"\s*:\s*\*{0,2}_{0,2}\s*"
+            return re.sub(pattern, "", s, flags=re.IGNORECASE).strip()
+
+        def is_label(s, label):
+            return re.match(r"^\*{0,2}_{0,2}\s*" + label + r"\s*:", s, flags=re.IGNORECASE) is not None
+
         for block in blocks:
             block = block.strip()
             if not block:
@@ -73,15 +83,14 @@ class VideoGenerator:
                 s = line.strip()
                 if not s:
                     continue
-                upper = s.upper()
-                if upper.startswith("GROUP:"):
-                    group = s[6:].strip()
-                elif upper.startswith("VISUAL:"):
-                    visual = s[7:].strip()
-                elif upper.startswith("TEXT:"):
-                    text_lines.append(s[5:].strip())
+                if is_label(s, "GROUP"):
+                    group = strip_label(s, "GROUP")
+                elif is_label(s, "VISUAL"):
+                    visual = strip_label(s, "VISUAL")
+                elif is_label(s, "TEXT"):
+                    text_lines.append(strip_label(s, "TEXT"))
                 else:
-                    text_lines.append(s)
+                    text_lines.append(s.replace("**", "").replace("__", ""))
             text = " ".join(text_lines).strip()
             if text or visual:
                 scenes.append({
@@ -216,7 +225,6 @@ class VideoGenerator:
         global_start = 3.0
 
         for i, scene in enumerate(scenes):
-            # ВАЖНО: передаём оба аргумента — group и visual
             img_path = self.fetcher.fetch(scene["group"], scene["visual"], index=i)
             if img_path:
                 direction = random.choice(["in", "out"])
@@ -289,6 +297,7 @@ class VideoGenerator:
             shorts_duration = min(60, audio.duration)
             shorts_audio = audio.subclip(0, shorts_duration)
         else:
+            audio = None
             shorts_duration = 60
             shorts_audio = None
 
