@@ -19,7 +19,6 @@ class VideoGenerator:
         self.output_dir = Path("video_output")
         self.output_dir.mkdir(exist_ok=True)
 
-        # Только вертикальный формат для Shorts
         self.width = 1080
         self.height = 1920
         self.fps = 30
@@ -41,12 +40,12 @@ class VideoGenerator:
         if size in self._font_cache:
             return self._font_cache[size]
         candidates = [
-            "arial.ttf",
+            "arialbd.ttf",
+            "C:\\Windows\\Fonts\\arialbd.ttf",
             "C:\\Windows\\Fonts\\arial.ttf",
-            "/System/Library/Fonts/Supplemental/Arial.ttf",
+            "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
             "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
         ]
         font = None
         for path in candidates:
@@ -133,10 +132,21 @@ class VideoGenerator:
         )
         return zoomed.set_duration(duration)
 
+    def _draw_text_with_outline(self, draw, x, y, text, font,
+                                 fill=(255, 255, 255, 255),
+                                 outline=(0, 0, 0, 255),
+                                 outline_width=4):
+        """Рисует текст с чёрным контуром по кругу."""
+        for dx in range(-outline_width, outline_width + 1):
+            for dy in range(-outline_width, outline_width + 1):
+                if dx == 0 and dy == 0:
+                    continue
+                draw.text((x + dx, y + dy), text, font=font, fill=outline)
+        draw.text((x, y), text, font=font, fill=fill)
+
     def _add_subtitle(self, clip, subtitles, global_start, scene_text):
-        """Показывает ТОЛЬКО текущее предложение, если есть тайм-коды.
-        Иначе — текст сцены (он короткий, 1-2 предложения)."""
-        font = self._load_font(56)
+        """Субтитры: белый текст с чёрным контуром, снизу по центру, без фона."""
+        font = self._load_font(58)
         W, H = self.width, self.height
 
         def add_text(get_frame, t):
@@ -152,25 +162,43 @@ class VideoGenerator:
             if subtitles:
                 text = self._find_current_sentence(subtitles, global_start + t)
             if not text:
-                text = scene_text  # fallback — короткий текст сцены
+                text = scene_text
 
             if text:
-                wrapped = textwrap.fill(text, width=28)
-                bbox = draw.multiline_textbbox((0, 0), wrapped, font=font, align="left")
-                text_h = bbox[3] - bbox[1]
+                # Переносим на несколько строк
+                wrapped = textwrap.fill(text, width=30)
+                lines = wrapped.split("\n")
 
-                # Подложка снизу
-                overlay = Image.new("RGBA", (W, text_h + 100), (0, 0, 0, 200))
-                img.paste(overlay, (0, H - text_h - 150), overlay)
+                # Вычисляем общую высоту блока
+                line_heights = []
+                for line in lines:
+                    bbox = draw.textbbox((0, 0), line, font=font)
+                    line_heights.append(bbox[3] - bbox[1])
+                total_h = sum(line_heights) + (len(lines) - 1) * 10
 
-                draw.multiline_text((40, H - text_h - 120), wrapped,
-                                    fill=(255, 255, 255, 255), font=font, align="left")
+                # Начало снизу: отступ 180 px от низа
+                y_start = H - 180 - total_h
+
+                for i, line in enumerate(lines):
+                    bbox = draw.textbbox((0, 0), line, font=font)
+                    line_w = bbox[2] - bbox[0]
+                    x = (W - line_w) // 2
+
+                    # y текущей строки
+                    y = y_start + sum(line_heights[:i]) + i * 10
+
+                    self._draw_text_with_outline(
+                        draw, x, y, line, font,
+                        fill=(255, 255, 255, 255),
+                        outline=(0, 0, 0, 255),
+                        outline_width=4,
+                    )
+
             return np.array(img.convert("RGB"))
 
         return clip.fl(add_text)
 
     def assemble_shorts(self, script, audio_path, title, output_filename="shorts.mp4"):
-        """Единственный формат — вертикальный Shorts."""
         print(f"\n📱 Собираю Shorts...")
 
         audio = AudioFileClip(audio_path) if audio_path and Path(audio_path).exists() else None
@@ -185,7 +213,6 @@ class VideoGenerator:
         scenes = self._parse_scenes(script)
         print(f"📊 Сцен: {len(scenes)}")
 
-        # Длительность каждой сцены = общая / число сцен
         scene_duration = total_duration / max(len(scenes), 1)
         print(f"⏱ Каждая сцена: {scene_duration:.1f} сек")
 
