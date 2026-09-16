@@ -33,22 +33,6 @@ jobs:
           pip install -r requirements.txt
           pip install edge-tts requests openai
 
-      - name: Test Groq connection
-        env:
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-        run: |
-          python -c "
-          from openai import OpenAI
-          import os
-          c = OpenAI(base_url='https://api.groq.com/openai/v1', api_key=os.environ['GROQ_API_KEY'])
-          r = c.chat.completions.create(
-              model='openai/gpt-oss-120b',
-              messages=[{'role':'user','content':'Назови 3 AI инструмента одной строкой'}],
-              max_tokens=100,
-          )
-          print('GROQ OK:', r.choices[0].message.content)
-          "
-
       - name: Run factory
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
