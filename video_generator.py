@@ -1,265 +1,274 @@
-from PIL import Image, ImageDraw, ImageFont
-
-if not hasattr(Image, "ANTIALIAS"):
-    Image.ANTIALIAS = Image.LANCZOS
-
-from moviepy.editor import *
-import numpy as np
-from pathlib import Path
-import textwrap
-import random
+import os
 import re
-import json
+import time
+from openai import OpenAI
 
-from image_fetcher import ImageFetcher
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+MODEL = "openai/gpt-oss-120b"
+
+MAX_ATTEMPTS = 2
+MIN_SCORE = 7
+PAUSE = 20
 
 
-class VideoGenerator:
+class ScriptGenerator:
     def __init__(self):
-        self.output_dir = Path("video_output")
-        self.output_dir.mkdir(exist_ok=True)
+        self.client = OpenAI(base_url=GROQ_BASE_URL, api_key=GROQ_API_KEY) if GROQ_API_KEY else None
+        self.last_score = 0
 
-        self.width = 1080
-        self.height = 1920
-        self.fps = 30
-
-        self.colors = {
-            "background": (15, 15, 35),
-            "text": (255, 255, 255),
-            "accent": (0, 200, 255),
-            "highlight": (255, 200, 0),
-        }
-
-        self._font_cache = {}
-        self.fetcher = ImageFetcher()
-
-        self.music_path = Path("background_music.mp3")
-        self.music_volume = 0.15
-
-    def _load_font(self, size):
-        if size in self._font_cache:
-            return self._font_cache[size]
-        candidates = [
-            "arialbd.ttf",
-            "C:\\Windows\\Fonts\\arialbd.ttf",
-            "C:\\Windows\\Fonts\\arial.ttf",
-            "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-        ]
-        font = None
-        for path in candidates:
+    def _ask(self, role, prompt, temperature=0.7, retries=3):
+        for attempt in range(retries):
             try:
-                font = ImageFont.truetype(path, size)
-                break
-            except Exception:
-                continue
-        if font is None:
-            font = ImageFont.load_default()
-        self._font_cache[size] = font
-        return font
-
-    def _parse_scenes(self, script):
-        scenes = []
-        blocks = re.split(r"\[SCENE\s*\d+\]", script, flags=re.IGNORECASE)
-        for block in blocks:
-            block = block.strip()
-            if not block:
-                continue
-            group = ""
-            visual = ""
-            text_lines = []
-            for line in block.split("\n"):
-                s = line.strip()
-                if not s:
+                r = self.client.chat.completions.create(
+                    model=MODEL,
+                    messages=[
+                        {"role": "system", "content": role},
+                        {"role": "user", "content": prompt},
+                    ],
+                    temperature=temperature,
+                    max_tokens=3000,
+                )
+                return r.choices[0].message.content
+            except Exception as e:
+                if "429" in str(e):
+                    time.sleep(15 * (attempt + 1))
                     continue
-                upper = s.upper()
-                if upper.startswith("GROUP:"):
-                    group = s[6:].strip()
-                elif upper.startswith("VISUAL:"):
-                    visual = s[7:].strip()
-                elif upper.startswith("TEXT:"):
-                    text_lines.append(s[5:].strip())
-                else:
-                    text_lines.append(s)
-            text = " ".join(text_lines).strip()
-            if text or visual:
-                scenes.append({
-                    "group": group or "intro",
-                    "visual": visual or "abstract background",
-                    "text": text,
-                })
-        if not scenes:
-            scenes = [{"group": "intro", "visual": "abstract background", "text": script[:500]}]
-        return scenes
-
-    def _load_subtitles(self, audio_path):
-        if not audio_path:
-            return []
-        json_path = Path(audio_path).with_suffix(".json")
-        if not json_path.exists():
-            return []
-        try:
-            with open(json_path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return []
-
-    def _find_current_sentence(self, subtitles, t):
-        for s in subtitles:
-            if s["start"] <= t <= s["end"]:
-                return s["text"]
+                return None
         return None
 
-    def _ken_burns(self, image_path, duration, direction="in"):
-        try:
-            img_clip = ImageClip(image_path).set_duration(duration)
-        except Exception:
-            return ColorClip(size=(self.width, self.height),
-                             color=self.colors["background"], duration=duration)
-        img_clip = img_clip.resize(height=self.height)
-        if img_clip.w < self.width:
-            img_clip = img_clip.resize(width=self.width)
-        if direction == "in":
-            zoomed = img_clip.resize(lambda t: 1 + 0.15 * (t / duration))
-        else:
-            zoomed = img_clip.resize(lambda t: 1.15 - 0.15 * (t / duration))
-        zoomed = zoomed.crop(
-            x_center=zoomed.w / 2,
-            y_center=zoomed.h / 2,
-            width=self.width,
-            height=self.height,
-        )
-        return zoomed.set_duration(duration)
+    def pick_best_topic(self, niche, recent_topics=None, best_topics=None):
+        print(f"\n🧠 Выбираю тему: {niche}")
+        recent_topics = recent_topics or []
 
-    def _draw_text_with_outline(self, draw, x, y, text, font,
-                                 fill=(255, 255, 255, 255),
-                                 outline=(0, 0, 0, 255),
-                                 outline_width=4):
-        """Рисует текст с чёрным контуром по кругу."""
-        for dx in range(-outline_width, outline_width + 1):
-            for dy in range(-outline_width, outline_width + 1):
-                if dx == 0 and dy == 0:
-                    continue
-                draw.text((x + dx, y + dy), text, font=font, fill=outline)
-        draw.text((x, y), text, font=font, fill=fill)
+        role = "Ты — стратег YouTube Shorts."
+        prompt = f"""Выбери тему для Shorts (30-45 секунд).
 
-    def _add_subtitle(self, clip, subtitles, global_start, scene_text):
-        """Субтитры: белый текст с чёрным контуром, снизу по центру, без фона."""
-        font = self._load_font(58)
-        W, H = self.width, self.height
+НИША: {niche}
+УЖЕ ДЕЛАЛИ: {", ".join(recent_topics[-10:]) if recent_topics else "ничего"}
 
-        def add_text(get_frame, t):
-            frame = get_frame(t).copy()
-            if frame.ndim == 2:
-                frame = np.stack([frame] * 3, axis=-1)
-            elif frame.shape[-1] == 4:
-                frame = frame[..., :3]
-            img = Image.fromarray(frame).convert("RGBA")
-            draw = ImageDraw.Draw(img)
+Тема должна быть про КОНКРЕТНУЮ проблему, не «AI вообще».
 
-            text = None
-            if subtitles:
-                text = self._find_current_sentence(subtitles, global_start + t)
-            if not text:
-                text = scene_text
+ПРИМЕРЫ ХОРОШИХ ТЕМ:
+- Почему твои тексты не работают (и как ChatGPT это исправит)
+- 3 ошибки в ChatGPT, которые убивают результат
+- Я неделю делал всё через AI. Вот что сломалось
 
-            if text:
-                # Переносим на несколько строк
-                wrapped = textwrap.fill(text, width=30)
-                lines = wrapped.split("\n")
+ЗАДАЧА: придумай 5 тем, выбери 1.
 
-                # Вычисляем общую высоту блока
-                line_heights = []
-                for line in lines:
-                    bbox = draw.textbbox((0, 0), line, font=font)
-                    line_heights.append(bbox[3] - bbox[1])
-                total_h = sum(line_heights) + (len(lines) - 1) * 10
+ФОРМАТ:
+ТЕМЫ:
+1. <тема>
+2. <тема>
+3. <тема>
+4. <тема>
+5. <тема>
 
-                # Начало снизу: отступ 180 px от низа
-                y_start = H - 180 - total_h
+ЛУЧШАЯ: <номер>"""
 
-                for i, line in enumerate(lines):
-                    bbox = draw.textbbox((0, 0), line, font=font)
-                    line_w = bbox[2] - bbox[0]
-                    x = (W - line_w) // 2
+        result = self._ask(role, prompt, temperature=0.8)
+        topics = re.findall(r"^\d+\.\s*(.+)$", result or "", re.MULTILINE)
+        m = re.search(r"ЛУЧШАЯ:\s*(\d+)", result or "")
+        n = int(m.group(1)) if m else 1
+        chosen = topics[n-1].strip() if topics and 1 <= n <= len(topics) else (topics[0].strip() if topics else "Почему твои тексты не работают")
+        print(f"   ✅ Тема: {chosen}")
+        return chosen
 
-                    # y текущей строки
-                    y = y_start + sum(line_heights[:i]) + i * 10
+    def _research(self, topic, niche):
+        print("   🔍 Ресёрчер...")
+        role = "Ты — исследователь. Только РЕАЛЬНЫЕ продукты."
+        prompt = f"""Собери 3 факта про РЕАЛЬНЫЕ AI-инструменты.
 
-                    self._draw_text_with_outline(
-                        draw, x, y, line, font,
-                        fill=(255, 255, 255, 255),
-                        outline=(0, 0, 0, 255),
-                        outline_width=4,
-                    )
+ТЕМА: {topic}
 
-            return np.array(img.convert("RGB"))
+РАЗРЕШЁННЫЕ: ChatGPT, Claude, Midjourney, Notion AI, Perplexity, Gemini.
 
-        return clip.fl(add_text)
+Для 3 инструментов:
+- Название
+- Цена (бесплатно / от X$)
+- 1 цифра (пользователи, экономия времени)
 
-    def assemble_shorts(self, script, audio_path, title, output_filename="shorts.mp4"):
-        print(f"\n📱 Собираю Shorts...")
+Максимум 800 символов."""
+        return self._ask(role, prompt, temperature=0.3) or ""
 
-        audio = AudioFileClip(audio_path) if audio_path and Path(audio_path).exists() else None
-        total_duration = audio.duration if audio else 60
+    def _write_shorts(self, topic, niche, research, feedback=""):
+        print("   ✍️ Сценарист...")
+        role = "Ты — сценарист YouTube Shorts. Пишешь по канонам удержания."
 
-        subtitles = self._load_subtitles(audio_path)
-        if subtitles:
-            print(f"📝 Загружено {len(subtitles)} предложений для субтитров")
-        else:
-            print("ℹ️ Тайм-коды не найдены — субтитры = текст сцены")
+        prompt = f"""Напиши сценарий Shorts (30-45 секунд, ~100 слов).
 
-        scenes = self._parse_scenes(script)
-        print(f"📊 Сцен: {len(scenes)}")
+ТЕМА: {topic}
+ФАКТЫ: {research[:800]}
 
-        scene_duration = total_duration / max(len(scenes), 1)
-        print(f"⏱ Каждая сцена: {scene_duration:.1f} сек")
+СТРУКТУРА (обязательно):
 
-        clips = []
-        global_start = 0.0
+**0-3 сек — КРЮЧОК**
+Не «знаете, что». Сразу боль или противоречие.
+Формула: «[Название проблемы] — не потому что [ожидание]. А потому что [реальность]»
+Пример: «Твои тексты не работают не потому, что ты плохо пишешь. А потому что ты пишешь их вручную»
 
-        for i, scene in enumerate(scenes):
-            img_path = self.fetcher.fetch(scene["group"], scene["visual"], index=i)
-            if img_path:
-                direction = random.choice(["in", "out"])
-                base = self._ken_burns(img_path, scene_duration, direction)
-            else:
-                base = ColorClip(size=(self.width, self.height),
-                                 color=self.colors["background"],
-                                 duration=scene_duration)
-            clip = self._add_subtitle(base, subtitles, global_start, scene["text"])
-            clips.append(clip)
-            global_start += scene_duration
+**3-8 сек — СТАВКИ**
+Почему это важно. Что теряет человек.
+Пример: «Это съедает 4 часа в день. Каждый день.»
 
-        final = concatenate_videoclips(clips, method="compose")
+**8-30 сек — ЦЕННОСТЬ через «НО» и «ПОЭТОМУ»**
+Инструмент 1 → НО проблема → ПОЭТОМУ инструмент 2 → А для X → инструмент 3.
+Пример: «ChatGPT пишет черновик за 10 минут. НО он не помнит твои задачи. ПОЭТОМУ нужен Notion AI. А для обложек — Midjourney.»
 
-        if audio:
-            if final.duration < audio.duration:
-                final = final.set_duration(audio.duration)
-            else:
-                final = final.subclip(0, audio.duration)
+**30-40 сек — ВЫВОД + ЦИКЛ**
+Последняя фраза должна цеплять крючок.
+Пример: «Ты всё ещё тратишь 4 часа? Тогда вот следующий шаг» (и видео начинается заново)
 
-            tracks = [audio]
-            if self.music_path.exists():
-                music = AudioFileClip(str(self.music_path)).volumex(self.music_volume)
-                if music.duration < final.duration:
-                    loops = int(final.duration / music.duration) + 1
-                    music = concatenate_audioclips([music] * loops)
-                music = music.subclip(0, final.duration)
-                tracks.append(music)
-                print(f"🎵 Музыка подмешана ({self.music_volume*100:.0f}%)")
+ЗАПРЕЩЕНО:
+- «Сегодня мы поговорим», «в современном мире», «многие эксперты»
+- «И ещё есть...» — только «НО» и «ПОЭТОМУ»
+- Длинные предложения (>15 слов)
 
-            final = final.set_audio(CompositeAudioClip(tracks))
+ФОРМАТ:
 
-        output_path = self.output_dir / output_filename
-        final.write_videofile(
-            str(output_path),
-            fps=self.fps,
-            codec="libx264",
-            audio_codec="aac",
-            temp_audiofile="temp-shorts.m4a",
-            remove_temp=True,
-        )
-        print(f"✅ Shorts сохранён: {output_path}")
-        return str(output_path)
+[SCENE 1]
+GROUP: intro
+VISUAL: 3-5 english words
+TEXT: Крючок (1 предложение).
+
+[SCENE 2]
+GROUP: <инструмент 1>
+VISUAL: 3-5 english words
+TEXT: 1-2 предложения.
+
+[SCENE 3]
+GROUP: <инструмент 2>
+VISUAL: 3-5 english words
+TEXT: 1-2 предложения.
+
+[SCENE 4]
+GROUP: <инструмент 3>
+VISUAL: 3-5 english words
+TEXT: 1-2 предложения + вывод.
+
+[SCENE 5]
+GROUP: outro
+VISUAL: subscribe button
+TEXT: Цикл-крючок (1 предложение).
+
+ВЕРНИ ТОЛЬКО СЦЕНЫ."""
+
+        if feedback:
+            prompt += f"\n\nИСПРАВЬ:\n{feedback[:300]}"
+
+        return self._ask(role, prompt) or ""
+
+    def _critic_shorts(self, script):
+        print("   🧐 Критик...")
+        role = "Ты — строгий редактор Shorts."
+
+        prompt = f"""Оцени по 4 критериям (каждый 1-10):
+
+СЦЕНАРИЙ:
+{script[:2000]}
+
+1. КРЮЧОК: первые 3 сек — боль/противоречие? (не «знаете, что»)
+2. СВЯЗКИ: есть «НО» и «ПОЭТОМУ»? (не «и ещё»)
+3. ЦИКЛ: последняя фраза цепляет начало?
+4. ПЛОТНОСТЬ: нет воды, каждое слово работает?
+
+ФОРМАТ:
+ОЦЕНКА: <среднее>
+ВЕРДИКТ: <PASS/FAIL>
+ФИДБЕК: <1 предложение>"""
+
+        result = self._ask(role, prompt, temperature=0.2)
+        score, verdict, feedback = 5, "FAIL", ""
+        for line in (result or "").split("\n"):
+            if line.startswith("ОЦЕНКА:"):
+                try: score = int(line.replace("ОЦЕНКА:", "").strip().split()[0])
+                except: pass
+            elif line.startswith("ВЕРДИКТ:"):
+                verdict = line.replace("ВЕРДИКТ:", "").strip()
+            elif line.startswith("ФИДБЕК:"):
+                feedback = line.replace("ФИДБЕК:", "").strip()
+        return score, verdict, feedback
+
+    def generate_shorts_script(self, topic, niche):
+        print(f"\n📝 Сценарий: {topic}")
+        if not self.client:
+            return self._fallback_script(topic, niche)
+
+        research = self._research(topic, niche)
+        best_script, best_score, feedback = None, 0, ""
+
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            print(f"\n   --- Итерация {attempt}/{MAX_ATTEMPTS} ---")
+            if attempt > 1:
+                time.sleep(PAUSE)
+            script = self._write_shorts(topic, niche, research, feedback)
+            if not script:
+                continue
+            score, verdict, feedback = self._critic_shorts(script)
+            print(f"   Оценка: {score}/10 ({verdict})")
+            if score > best_score:
+                best_score, best_script = score, script
+            if score >= MIN_SCORE:
+                print(f"✅ Принят")
+                break
+            print(f"⚠️ Переделка...")
+
+        self.last_score = best_score
+        return best_script or self._fallback_script(topic, niche)
+
+    def extract_tools(self, script):
+        tools = set()
+        for m in re.finditer(r"GROUP:\s*(.+)", script):
+            g = m.group(1).strip()
+            if g.lower() not in ("intro", "outro") and len(g) < 30:
+                tools.add(g)
+        return sorted(tools)
+
+    def generate_title_and_description(self, script, niche):
+        print("\n🎬 SEO...")
+        if not self.client:
+            return {"title": niche, "description": script[:200], "tags": [niche]}
+        role = "Ты — SEO-специалист."
+        prompt = f"""Создай метаданные Shorts.
+
+НИША: {niche}
+СЦЕНАРИЙ: {script[:1500]}
+
+ФОРМАТ:
+НАЗВАНИЕ: до 50 символов
+ОПИСАНИЕ: 50-100 слов
+ТЕГИ: 8 тегов"""
+        result = self._ask(role, prompt) or ""
+        title, desc, tags = "", "", []
+        for line in result.split("\n"):
+            if line.startswith("НАЗВАНИЕ:"): title = line.replace("НАЗВАНИЕ:", "").strip()
+            elif line.startswith("ОПИСАНИЕ:"): desc = line.replace("ОПИСАНИЕ:", "").strip()
+            elif line.startswith("ТЕГИ:"): tags = [t.strip() for t in line.replace("ТЕГИ:", "").split(",") if t.strip()]
+        return {"title": title or niche, "description": desc or script[:200], "tags": tags or [niche]}
+
+    def _fallback_script(self, topic, niche):
+        return f"""[SCENE 1]
+GROUP: intro
+VISUAL: stressed writer deadline
+TEXT: Твои тексты не работают не потому, что ты плохо пишешь. А потому что ты делаешь это вручную.
+
+[SCENE 2]
+GROUP: ChatGPT
+VISUAL: person typing laptop chat
+TEXT: ChatGPT пишет черновик за 10 минут. НО он не помнит твои задачи.
+
+[SCENE 3]
+GROUP: Notion AI
+VISUAL: notebook organizer screen
+TEXT: ПОЭТОМУ нужен Notion AI — он ведёт заметки и планирует день. Стоит 10$ в месяц.
+
+[SCENE 4]
+GROUP: Midjourney
+VISUAL: digital art painting colorful
+TEXT: А для обложек — Midjourney. Делает картинку за 5 минут, от 10$ в месяц. Вот почему 70% фрилансеров уже используют AI.
+
+[SCENE 5]
+GROUP: outro
+VISUAL: subscribe button animation
+TEXT: Ты всё ещё тратишь 4 часа? Тогда следующий шаг — вот он.
+"""
