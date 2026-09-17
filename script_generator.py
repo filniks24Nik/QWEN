@@ -92,73 +92,57 @@ class ScriptGenerator:
         print("   ✍️ Сценарист...")
         role = "Ты — сценарист YouTube Shorts. Пишешь по канонам удержания."
 
-        prompt = f"""Напиши сценарий Shorts (50 секунд, ~80 слов).
+        prompt = f"""Напиши сценарий Shorts (50 секунд, 8-12 предложений).
 
 ТЕМА: {topic}
 ФАКТЫ: {research[:800]}
 
-СТРУКТУРА:
+СТРУКТУРА РАССКАЗА:
+1. Крючок — противоречие.
+2. Проблема — что теряет человек.
+3. Решение 1 через ChatGPT.
+4. Решение 2 через Notion AI.
+5. Решение 3 через Midjourney.
+6. Вывод — что делать.
+7. Цикл-крючок в конце.
 
-**0-3 сек — КРЮЧОК**
-Не «знаете, что». Сразу противоречие.
-Формула: «[Проблема] не потому что [ожидание]. А потому что [реальность]»
-Пример: «Твои тексты не работают не потому, что ты плохо пишешь. А потому что ты пишешь их вручную»
+ЖЁСТКИЕ ПРАВИЛА:
+1. КАЖДАЯ сцена = РОВНО ОДНО предложение.
+2. КАЖДАЯ сцена имеет СВОЙ VISUAL — 5-10 слов, детальное описание кадра.
+3. VISUAL описывает КОНКРЕТНУЮ СЦЕНУ: кто, что делает, где.
+4. Всего 8-12 сцен.
+5. Запрещены: «сегодня мы поговорим», «в современном мире», «многие эксперты».
 
-**3-8 сек — СТАВКИ**
-Что теряет человек. Одна цифра.
-
-**8-45 сек — ЦЕННОСТЬ через «НО» и «ПОЭТОМУ»**
-Инструмент 1 → НО проблема → ПОЭТОМУ инструмент 2 → А для X → инструмент 3.
-Пример: «ChatGPT пишет черновик за 10 минут. НО он не помнит твои задачи. ПОЭТОМУ нужен Notion AI. А для обложек — Midjourney.»
-
-**45-50 сек — ВЫВОД + ЦИКЛ**
-Последняя фраза цепляет крючок.
-Пример: «Ты всё ещё тратишь 4 часа? Тогда вот следующий шаг.»
-
-ЗАПРЕЩЕНО:
-- «Сегодня мы поговорим», «в современном мире», «многие эксперты»
-- «И ещё есть...» — только «НО» и «ПОЭТОМУ»
-- Предложения длиннее 15 слов
-- Год 2026 в тексте
-
-ФОРМАТ:
+ФОРМАТ (строго):
 
 [SCENE 1]
 GROUP: intro
-VISUAL: 5-10 english words, detailed scene description
-TEXT: Крючок (1-2 предложения).
+VISUAL: close up of frustrated writer at desk, crumpled papers, dim lighting
+TEXT: Твои тексты не работают не потому, что ты плохо пишешь.
 
 [SCENE 2]
-GROUP: <инструмент 1>
-VISUAL: 5-10 english words, detailed scene description
-TEXT: 1-2 предложения.
+GROUP: intro
+VISUAL: close up of hands typing on laptop keyboard, chat window on screen
+TEXT: А потому что ты делаешь их вручную.
 
 [SCENE 3]
-GROUP: <инструмент 2>
-VISUAL: 5-10 english words, detailed scene description
-TEXT: 1-2 предложения.
+GROUP: ChatGPT
+VISUAL: person typing on laptop, ChatGPT interface on screen, office desk
+TEXT: ChatGPT пишет черновик за 10 минут.
 
 [SCENE 4]
-GROUP: <инструмент 3>
-VISUAL: 5-10 english words, detailed scene description
-TEXT: 1-2 предложения + вывод.
+GROUP: ChatGPT
+VISUAL: close up of timer on phone screen, countdown showing 10 minutes
+TEXT: НО он не помнит твои задачи.
 
-[SCENE 5]
-GROUP: outro
-VISUAL: subscribe button animation
-TEXT: Цикл-крючок (1 предложение).
+... и так далее, 8-12 сцен.
 
-ПРАВИЛА ДЛЯ VISUAL (для AI-генерации картинок):
-1. VISUAL — на английском, 5-10 слов, ДЕТАЛЬНОЕ описание сцены.
-2. Описывай ЧТО В КАДРЕ: кто, что делает, где, какие детали.
-3. ПРИМЕРЫ ХОРОШИХ VISUAL:
-   - "close up of man hands typing on laptop keyboard, office desk, coffee cup"
-   - "young woman writing in notebook at wooden desk, warm sunlight"
-   - "person holding smartphone looking at screen, blurred city background"
-   - "hands of designer drawing on tablet with stylus, creative studio"
-4. НЕ используй абстракции: "fast data flow", "digital transformation".
-5. НЕ используй названия брендов (ChatGPT → "person typing").
-6. Представь, что описываешь кадр для фотографа.
+ПРАВИЛА VISUAL:
+1. На английском, 5-10 слов.
+2. КОНКРЕТНАЯ СЦЕНА: человек + действие + детали.
+3. ХОРОШИЕ: "close up of man hands typing on laptop keyboard, office desk, coffee cup".
+4. ЗАПРЕЩЕНЫ: "fast data flow", "multimodal workspace", "digital transformation".
+5. Каждый VISUAL — УНИКАЛЬНЫЙ.
 
 ВЕРНИ ТОЛЬКО СЦЕНЫ."""
 
@@ -209,26 +193,51 @@ TEXT: Цикл-крючок (1 предложение).
     def _fallback_script(self, topic, niche):
         return f"""[SCENE 1]
 GROUP: intro
-VISUAL: close up of stressed writer at desk, crumpled papers, dim lighting
-TEXT: Твои тексты не работают не потому, что ты плохо пишешь. А потому что ты делаешь это вручную.
+VISUAL: close up of frustrated writer at desk, crumpled papers, dim lighting
+TEXT: Твои тексты не работают не потому, что ты плохо пишешь.
 
 [SCENE 2]
-GROUP: ChatGPT
-VISUAL: close up of hands typing on laptop keyboard, chat window on screen, office desk
-TEXT: ChatGPT пишет черновик за 10 минут. НО он не помнит твои задачи.
+GROUP: intro
+VISUAL: close up of hands typing on laptop keyboard, chat window on screen
+TEXT: А потому что ты делаешь их вручную.
 
 [SCENE 3]
-GROUP: Notion AI
-VISUAL: person writing notes in organizer on wooden desk, warm sunlight, coffee cup
-TEXT: ПОЭТОМУ нужен Notion AI — он ведёт заметки. Стоит 10$ в месяц.
+GROUP: ChatGPT
+VISUAL: person typing on laptop, ChatGPT interface on screen, office desk
+TEXT: ChatGPT пишет черновик за 10 минут.
 
 [SCENE 4]
-GROUP: Midjourney
-VISUAL: designer drawing on tablet with stylus, colorful digital art on screen, creative studio
-TEXT: А для обложек — Midjourney. Делает картинку за 5 минут, от 10$ в месяц.
+GROUP: ChatGPT
+VISUAL: close up of timer on phone screen, countdown showing 10 minutes
+TEXT: НО он не помнит твои задачи.
 
 [SCENE 5]
+GROUP: Notion AI
+VISUAL: person writing notes in organizer on wooden desk, warm sunlight
+TEXT: ПОЭТОМУ нужен Notion AI — он ведёт заметки.
+
+[SCENE 6]
+GROUP: Notion AI
+VISUAL: close up of notebook with organized list, pencil, coffee cup
+TEXT: Стоит 10$ в месяц.
+
+[SCENE 7]
+GROUP: Midjourney
+VISUAL: designer drawing on tablet with stylus, colorful digital art on screen
+TEXT: А для обложек — Midjourney.
+
+[SCENE 8]
+GROUP: Midjourney
+VISUAL: close up of digital art on monitor, bright colors, creative studio
+TEXT: Делает картинку за 5 минут, от 10$ в месяц.
+
+[SCENE 9]
+GROUP: outro
+VISUAL: person looking at phone with surprised expression, bright background
+TEXT: Ты всё ещё тратишь 4 часа в день?
+
+[SCENE 10]
 GROUP: outro
 VISUAL: subscribe button animation, red bell icon, bright yellow background
-TEXT: Ты всё ещё тратишь 4 часа? Тогда следующий шаг — вот он.
+TEXT: Тогда следующий шаг — вот он.
 """
