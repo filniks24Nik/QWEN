@@ -125,28 +125,40 @@ class ScriptGenerator:
 
 [SCENE 1]
 GROUP: intro
-VISUAL: 3-5 english words
+VISUAL: 5-10 english words, detailed scene description
 TEXT: Крючок (1-2 предложения).
 
 [SCENE 2]
 GROUP: <инструмент 1>
-VISUAL: 3-5 english words
+VISUAL: 5-10 english words, detailed scene description
 TEXT: 1-2 предложения.
 
 [SCENE 3]
 GROUP: <инструмент 2>
-VISUAL: 3-5 english words
+VISUAL: 5-10 english words, detailed scene description
 TEXT: 1-2 предложения.
 
 [SCENE 4]
 GROUP: <инструмент 3>
-VISUAL: 3-5 english words
+VISUAL: 5-10 english words, detailed scene description
 TEXT: 1-2 предложения + вывод.
 
 [SCENE 5]
 GROUP: outro
-VISUAL: subscribe button
+VISUAL: subscribe button animation
 TEXT: Цикл-крючок (1 предложение).
+
+ПРАВИЛА ДЛЯ VISUAL (для AI-генерации картинок):
+1. VISUAL — на английском, 5-10 слов, ДЕТАЛЬНОЕ описание сцены.
+2. Описывай ЧТО В КАДРЕ: кто, что делает, где, какие детали.
+3. ПРИМЕРЫ ХОРОШИХ VISUAL:
+   - "close up of man hands typing on laptop keyboard, office desk, coffee cup"
+   - "young woman writing in notebook at wooden desk, warm sunlight"
+   - "person holding smartphone looking at screen, blurred city background"
+   - "hands of designer drawing on tablet with stylus, creative studio"
+4. НЕ используй абстракции: "fast data flow", "digital transformation".
+5. НЕ используй названия брендов (ChatGPT → "person typing").
+6. Представь, что описываешь кадр для фотографа.
 
 ВЕРНИ ТОЛЬКО СЦЕНЫ."""
 
@@ -197,26 +209,26 @@ TEXT: Цикл-крючок (1 предложение).
     def _fallback_script(self, topic, niche):
         return f"""[SCENE 1]
 GROUP: intro
-VISUAL: stressed writer deadline
+VISUAL: close up of stressed writer at desk, crumpled papers, dim lighting
 TEXT: Твои тексты не работают не потому, что ты плохо пишешь. А потому что ты делаешь это вручную.
 
 [SCENE 2]
 GROUP: ChatGPT
-VISUAL: person typing laptop chat
+VISUAL: close up of hands typing on laptop keyboard, chat window on screen, office desk
 TEXT: ChatGPT пишет черновик за 10 минут. НО он не помнит твои задачи.
 
 [SCENE 3]
 GROUP: Notion AI
-VISUAL: notebook organizer screen
+VISUAL: person writing notes in organizer on wooden desk, warm sunlight, coffee cup
 TEXT: ПОЭТОМУ нужен Notion AI — он ведёт заметки. Стоит 10$ в месяц.
 
 [SCENE 4]
 GROUP: Midjourney
-VISUAL: digital art painting colorful
+VISUAL: designer drawing on tablet with stylus, colorful digital art on screen, creative studio
 TEXT: А для обложек — Midjourney. Делает картинку за 5 минут, от 10$ в месяц.
 
 [SCENE 5]
 GROUP: outro
-VISUAL: subscribe button animation
+VISUAL: subscribe button animation, red bell icon, bright yellow background
 TEXT: Ты всё ещё тратишь 4 часа? Тогда следующий шаг — вот он.
 """
