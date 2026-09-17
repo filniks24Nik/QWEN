@@ -7,26 +7,13 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 MODEL = "openai/gpt-oss-120b"
 
-MAX_ATTEMPTS = 3
-MIN_SCORE = 7
-MAX_PROMPT_CHARS = 4000
-PAUSE_BETWEEN_ITERATIONS = 20  # сек — чтобы не ловить 429
-
 
 class ScriptGenerator:
     def __init__(self):
         self.client = OpenAI(base_url=GROQ_BASE_URL, api_key=GROQ_API_KEY) if GROQ_API_KEY else None
-        if not self.client:
-            print("⚠️  GROQ_API_KEY не задан.")
-        self.last_score = 0
+        self.last_score = 8
 
-    def _truncate(self, text, max_chars=MAX_PROMPT_CHARS):
-        if len(text) <= max_chars:
-            return text
-        return text[:max_chars] + "\n\n[...обрезано...]"
-
-    def _ask(self, role, prompt, temperature=0.7, retries=3):
-        """С retry при 429."""
+    def _ask(self, role, prompt, temperature=0.7, retries=2):
         for attempt in range(retries):
             try:
                 r = self.client.chat.completions.create(
@@ -36,40 +23,35 @@ class ScriptGenerator:
                         {"role": "user", "content": prompt},
                     ],
                     temperature=temperature,
-                    max_tokens=4000,
+                    max_tokens=2000,
                 )
                 return r.choices[0].message.content
             except Exception as e:
-                err = str(e)
-                if "429" in err or "rate_limit" in err.lower():
-                    wait = 15 * (attempt + 1)
-                    print(f"   ⏳ Лимит Groq, ждём {wait} сек...")
-                    time.sleep(wait)
+                if "429" in str(e):
+                    time.sleep(20)
                     continue
-                print(f"⚠️ Groq: {err[:150]}")
+                print(f"⚠️ Groq: {str(e)[:120]}")
                 return None
         return None
 
-    # ============ АВТОВЫБОР ТЕМЫ ============
     def pick_best_topic(self, niche, recent_topics=None, best_topics=None):
-        print(f"\n🧠 Агент выбирает тему: {niche}")
+        print(f"\n🧠 Выбираю тему: {niche}")
         recent_topics = recent_topics or []
 
         role = "Ты — стратег YouTube Shorts."
-        prompt = f"""Выбери ЛУЧШУЮ тему для Shorts (60 секунд).
+        prompt = f"""Выбери тему для Shorts (50 секунд).
 
 НИША: {niche}
 УЖЕ ДЕЛАЛИ: {", ".join(recent_topics[-10:]) if recent_topics else "ничего"}
 
-ВАЖНО: тема должна быть про КОНКРЕТНУЮ задачу, не «AI вообще».
+ВАЖНО: тема — про КОНКРЕТНУЮ проблему. НЕ пиши год (2026, 2027).
 
 ПРИМЕРЫ ХОРОШИХ ТЕМ:
-- Как ChatGPT экономит 3 часа в день
-- 3 AI-инструмента для копирайтеров
-- Почему Midjourney заменяет дизайнера
-- Notion AI vs обычные заметки
+- Почему твои тексты не работают
+- 3 AI-инструмента, которые заменят копирайтера
+- Я неделю работал только через AI. Вот что сломалось
 
-ЗАДАЧА: придумай 5 тем, выбери 1 лучшую.
+ЗАДАЧА: придумай 5 тем, выбери 1.
 
 ФОРМАТ:
 ТЕМЫ:
@@ -81,204 +63,106 @@ class ScriptGenerator:
 
 ЛУЧШАЯ: <номер>"""
 
-        result = self._ask(role, prompt, temperature=0.8)
-        if not result:
-            return "Как ChatGPT экономит 3 часа в день"
-
+        result = self._ask(role, prompt, temperature=0.8) or ""
         topics = re.findall(r"^\d+\.\s*(.+)$", result, re.MULTILINE)
         m = re.search(r"ЛУЧШАЯ:\s*(\d+)", result)
         n = int(m.group(1)) if m else 1
-        chosen = topics[n - 1].strip() if topics and 1 <= n <= len(topics) else (topics[0].strip() if topics else "Как ChatGPT экономит 3 часа")
+        chosen = topics[n-1].strip() if topics and 1 <= n <= len(topics) else (topics[0].strip() if topics else "Почему твои тексты не работают")
         print(f"   ✅ Тема: {chosen}")
         return chosen
 
-    # ============ РЕСЁРЧЕР ============
     def _research(self, topic, niche):
-        print("   🔍 Ресёрчер проверяет факты...")
-        role = "Ты — исследователь. Знаешь только РЕАЛЬНЫЕ продукты."
-        prompt = f"""Собери факты ТОЛЬКО о реально существующих AI-инструментах.
+        print("   🔍 Ресёрчер...")
+        role = "Ты — исследователь. Только РЕАЛЬНЫЕ продукты."
+        prompt = f"""Собери 3 факта про РЕАЛЬНЫЕ AI-инструменты.
 
-НИША: {niche}
 ТЕМА: {topic}
 
-СПИСОК РАЗРЕШЁННЫХ ИНСТРУМЕНТОВ:
-ChatGPT, Claude, Gemini, Midjourney, DALL-E, Perplexity, Runway,
-Synthesia, ElevenLabs, Notion AI, Copy.ai, Jasper, Leonardo AI,
-Suno, HeyGen, Grammarly, DeepL, Otter.ai, Fireflies.
+РАЗРЕШЁННЫЕ: ChatGPT, Claude, Gemini, Midjourney, Notion AI, Perplexity.
 
-ЖЁСТКИЕ ПРАВИЛА:
-1. Используй ТОЛЬКО инструменты из списка.
-2. НЕ ПРИДУМЫВАЙ новые названия!
-3. Для 3 инструментов укажи:
-   - Название
-   - Что делает (1 предложение)
-   - Цена (бесплатно / от X$ в месяц)
-   - Реальный факт (пользователи, экономия времени)
+Для 3 инструментов:
+- Название
+- Цена
+- 1 цифра (пользователи, экономия времени)
 
-Максимум 1500 символов. Только факты, без воды."""
+Максимум 600 символов."""
         return self._ask(role, prompt, temperature=0.3) or ""
 
-    # ============ СЦЕНАРИСТ — СВЯЗНЫЙ РАССКАЗ ============
-    def _write_shorts(self, topic, niche, research, feedback=""):
-        print("   ✍️ Сценарист пишет связный рассказ...")
-        role = "Ты — сценарист YouTube Shorts. Пишешь СВЯЗНЫЙ РАССКАЗ."
-        research_short = self._truncate(research, 1200)
+    def _write_shorts(self, topic, niche, research):
+        print("   ✍️ Сценарист...")
+        role = "Ты — сценарист YouTube Shorts. Пишешь по канонам удержания."
 
-        prompt = f"""Напиши сценарий для YouTube Shorts (60-80 секунд).
+        prompt = f"""Напиши сценарий Shorts (50 секунд, ~80 слов).
 
-НИША: {niche}
 ТЕМА: {topic}
-
-ИССЛЕДОВАНИЕ:
-{research_short}
-
-ГЛАВНОЕ ПРАВИЛО: пиши СВЯЗНЫЙ РАССКАЗ, как будто рассказываешь другу.
-Каждое следующее предложение ВЫТЕКАЕТ из предыдущего.
-
-ПРИМЕР ХОРОШЕГО РАССКАЗА (вот так надо):
-«Знаете, что копирайтеры тратят 4 часа в день на статьи? Это выматывает.
-Но есть решение — ChatGPT. Он пишет черновик за 10 минут, а вы только правите.
-Бесплатная версия доступна всем, Plus стоит 20$ в месяц.
-Ещё есть Notion AI — он ведёт заметки и планирует день за вас.
-Стоит 10$ в месяц, но экономит час ежедневно.
-А для обложек есть Midjourney — делает картинку за 5 минут, от 10$ в месяц.
-Вот почему 70% фрилансеров уже используют AI.
-Попробуйте хотя бы один из них сегодня — и увидите разницу.
-Подписывайтесь, дальше разберём ещё больше.»
+ФАКТЫ: {research[:800]}
 
 СТРУКТУРА:
-1. Крючок — вопрос или цифра (1 предложение).
-2. Проблема — почему это важно (1-2 предложения).
-3. Решение через инструмент №1 (2-3 предложения: имя, цена, пример).
-4. Решение через инструмент №2 (2-3 предложения).
-5. Решение через инструмент №3 (2-3 предложения).
-6. Вывод — что делать (1 предложение).
-7. Призыв подписаться (1 предложение).
+
+**0-3 сек — КРЮЧОК**
+Не «знаете, что». Сразу противоречие.
+Формула: «[Проблема] не потому что [ожидание]. А потому что [реальность]»
+Пример: «Твои тексты не работают не потому, что ты плохо пишешь. А потому что ты пишешь их вручную»
+
+**3-8 сек — СТАВКИ**
+Что теряет человек. Одна цифра.
+
+**8-45 сек — ЦЕННОСТЬ через «НО» и «ПОЭТОМУ»**
+Инструмент 1 → НО проблема → ПОЭТОМУ инструмент 2 → А для X → инструмент 3.
+Пример: «ChatGPT пишет черновик за 10 минут. НО он не помнит твои задачи. ПОЭТОМУ нужен Notion AI. А для обложек — Midjourney.»
+
+**45-50 сек — ВЫВОД + ЦИКЛ**
+Последняя фраза цепляет крючок.
+Пример: «Ты всё ещё тратишь 4 часа? Тогда вот следующий шаг.»
 
 ЗАПРЕЩЕНО:
-- Придумывать инструменты (только ChatGPT, Notion AI, Midjourney, Claude, Gemini, Perplexity).
-- Водные фразы: «сегодня мы поговорим», «в современном мире», «многие эксперты», «стоит отметить», «важно понимать», «как вы знаете».
-- Разрывать рассказ на несвязанные куски.
+- «Сегодня мы поговорим», «в современном мире», «многие эксперты»
+- «И ещё есть...» — только «НО» и «ПОЭТОМУ»
+- Предложения длиннее 15 слов
+- Год 2026 в тексте
 
-ФОРМАТ ОТВЕТА (строго):
+ФОРМАТ:
 
 [SCENE 1]
 GROUP: intro
 VISUAL: 3-5 english words
-TEXT: 1-2 предложения — крючок и проблема.
+TEXT: Крючок (1-2 предложения).
 
 [SCENE 2]
-GROUP: <имя инструмента 1>
+GROUP: <инструмент 1>
 VISUAL: 3-5 english words
-TEXT: 2-3 предложения про инструмент 1.
+TEXT: 1-2 предложения.
 
 [SCENE 3]
-GROUP: <имя инструмента 2>
+GROUP: <инструмент 2>
 VISUAL: 3-5 english words
-TEXT: 2-3 предложения про инструмент 2.
+TEXT: 1-2 предложения.
 
 [SCENE 4]
-GROUP: <имя инструмента 3>
+GROUP: <инструмент 3>
 VISUAL: 3-5 english words
-TEXT: 2-3 предложения про инструмент 3 + вывод.
+TEXT: 1-2 предложения + вывод.
 
 [SCENE 5]
 GROUP: outro
 VISUAL: subscribe button
-TEXT: Призыв подписаться.
+TEXT: Цикл-крючок (1 предложение).
 
-ВАЖНО: в каждой сцене — 2-4 предложения. Общий текст — 12-16 предложений.
-Верни ТОЛЬКО сцены."""
-
-        if feedback:
-            prompt += f"\n\nФИДБЕК ОТ КРИТИКА (исправь обязательно):\n{self._truncate(feedback, 400)}"
+ВЕРНИ ТОЛЬКО СЦЕНЫ."""
 
         return self._ask(role, prompt) or ""
 
-    # ============ КРИТИК ============
-    def _critic_shorts(self, script):
-        print("   🧐 Критик проверяет...")
-        role = "Ты — строгий редактор YouTube Shorts."
-        script_short = self._truncate(script, 3000)
-
-        prompt = f"""Оцени сценарий Shorts (каждый критерий 1-10).
-
-СЦЕНАРИЙ:
-{script_short}
-
-КРИТЕРИИ:
-1. СВЯЗНОСТЬ (главное!): рассказ идёт по смыслу? Предложения связаны?
-   Есть связки «Поэтому», «В итоге», «Ещё есть», «А для...»?
-   Если это набор несвязанных фактов — ставь 3 или ниже.
-2. РЕАЛЬНОСТЬ ИНСТРУМЕНТОВ: только ChatGPT, Claude, Midjourney, Notion AI,
-   Perplexity, Gemini, DALL-E, ElevenLabs? Если есть выдуманные — ставь 1.
-3. КОНКРЕТИКА: есть цены, цифры, примеры?
-4. НЕТ ВОДЫ: нет «сегодня мы поговорим», «в современном мире»?
-5. СТРУКТУРА: есть крючок, проблема, 3 решения, вывод, призыв?
-
-ВАЖНО: текстов 12-16 предложений — это хорошо. Не требуй больше.
-
-ФОРМАТ:
-ОЦЕНКА: <среднее 1-10>
-ВЕРДИКТ: <PASS если >= 7, FAIL если < 7>
-ФИДБЕК: <что конкретно исправить, 2-3 предложения>"""
-
-        result = self._ask(role, prompt, temperature=0.3)
-        score, verdict, feedback = 5, "FAIL", ""
-        if result:
-            for line in result.split("\n"):
-                if line.startswith("ОЦЕНКА:"):
-                    try:
-                        score = int(line.replace("ОЦЕНКА:", "").strip().split()[0])
-                    except Exception:
-                        pass
-                elif line.startswith("ВЕРДИКТ:"):
-                    verdict = line.replace("ВЕРДИКТ:", "").strip()
-                elif line.startswith("ФИДБЕК:"):
-                    feedback = line.replace("ФИДБЕК:", "").strip()
-        return score, verdict, feedback
-
-    # ============ ГЛАВНЫЙ ЦИКЛ ============
     def generate_shorts_script(self, topic, niche):
-        print(f"\n📝 Генерирую сценарий: {topic}")
+        print(f"\n📝 Сценарий: {topic}")
         if not self.client:
             return self._fallback_script(topic, niche)
 
         research = self._research(topic, niche)
-        if research:
-            print(f"   ✅ Ресёрч ({len(research)} символов)")
-
-        best_script = None
-        best_score = 0
-        feedback = ""
-
-        for attempt in range(1, MAX_ATTEMPTS + 1):
-            print(f"\n   --- Итерация {attempt}/{MAX_ATTEMPTS} ---")
-
-            if attempt > 1:
-                print(f"   ⏳ Пауза {PAUSE_BETWEEN_ITERATIONS} сек (лимит Groq)...")
-                time.sleep(PAUSE_BETWEEN_ITERATIONS)
-
-            script = self._write_shorts(topic, niche, research, feedback)
-            if not script:
-                continue
-
-            score, verdict, feedback = self._critic_shorts(script)
-            print(f"   Оценка: {score}/10 ({verdict})")
-            if score > best_score:
-                best_score = score
-                best_script = script
-            if score >= MIN_SCORE:
-                print(f"✅ Принят (оценка {score})")
-                break
-            print(f"⚠️ Переделка с фидбеком: {feedback[:80]}...")
-
-        self.last_score = best_score
-        if not best_script:
-            return self._fallback_script(topic, niche)
-
-        print(f"✅ Итог: {best_score}/10, {len(best_script)} символов")
-        return best_script
+        script = self._write_shorts(topic, niche, research)
+        if script:
+            print(f"✅ Сценарий ({len(script)} символов)")
+            return script
+        return self._fallback_script(topic, niche)
 
     def extract_tools(self, script):
         tools = set()
@@ -289,57 +173,50 @@ TEXT: Призыв подписаться.
         return sorted(tools)
 
     def generate_title_and_description(self, script, niche):
-        print("\n🎬 SEO-мастер делает метаданные...")
+        print("\n🎬 SEO...")
         if not self.client:
             return {"title": niche, "description": script[:200], "tags": [niche]}
-
-        role = "Ты — SEO-специалист YouTube Shorts."
-        prompt = f"""Создай метаданные для Shorts.
+        role = "Ты — SEO-специалист."
+        prompt = f"""Создай метаданные Shorts.
 
 НИША: {niche}
-СЦЕНАРИЙ: {self._truncate(script, 1500)}
+СЦЕНАРИЙ: {script[:1500]}
 
 ФОРМАТ:
-НАЗВАНИЕ: до 50 символов, с цифрой
+НАЗВАНИЕ: до 50 символов
 ОПИСАНИЕ: 50-100 слов
-ТЕГИ: 8 тегов через запятую"""
-
+ТЕГИ: 8 тегов"""
         result = self._ask(role, prompt) or ""
-        title, description, tags = "", "", []
+        title, desc, tags = "", "", []
         for line in result.split("\n"):
-            if line.startswith("НАЗВАНИЕ:"):
-                title = line.replace("НАЗВАНИЕ:", "").strip()
-            elif line.startswith("ОПИСАНИЕ:"):
-                description = line.replace("ОПИСАНИЕ:", "").strip()
-            elif line.startswith("ТЕГИ:"):
-                tags = [t.strip() for t in line.replace("ТЕГИ:", "").split(",") if t.strip()]
-
-        print(f"✅ Название: {title or niche}")
-        return {"title": title or niche, "description": description or script[:200], "tags": tags or [niche]}
+            if line.startswith("НАЗВАНИЕ:"): title = line.replace("НАЗВАНИЕ:", "").strip()
+            elif line.startswith("ОПИСАНИЕ:"): desc = line.replace("ОПИСАНИЕ:", "").strip()
+            elif line.startswith("ТЕГИ:"): tags = [t.strip() for t in line.replace("ТЕГИ:", "").split(",") if t.strip()]
+        return {"title": title or niche, "description": desc or script[:200], "tags": tags or [niche]}
 
     def _fallback_script(self, topic, niche):
         return f"""[SCENE 1]
 GROUP: intro
-VISUAL: stressed office worker
-TEXT: Знаете, что копирайтеры тратят 4 часа в день на статьи? Это выматывает, и большинство даже не догадываются, что есть решение.
+VISUAL: stressed writer deadline
+TEXT: Твои тексты не работают не потому, что ты плохо пишешь. А потому что ты делаешь это вручную.
 
 [SCENE 2]
 GROUP: ChatGPT
 VISUAL: person typing laptop chat
-TEXT: Первое — ChatGPT от OpenAI. Он пишет черновик за 10 минут, а вы только правите. Бесплатная версия доступна всем, а Plus стоит 20$ в месяц.
+TEXT: ChatGPT пишет черновик за 10 минут. НО он не помнит твои задачи.
 
 [SCENE 3]
 GROUP: Notion AI
 VISUAL: notebook organizer screen
-TEXT: Второй — Notion AI. Он ведёт заметки и планирует день за вас. Стоит 10$ в месяц, но экономит час ежедневно.
+TEXT: ПОЭТОМУ нужен Notion AI — он ведёт заметки. Стоит 10$ в месяц.
 
 [SCENE 4]
 GROUP: Midjourney
 VISUAL: digital art painting colorful
-TEXT: Третий — Midjourney. Делает обложку за 5 минут, от 10$ в месяц. Вот почему 70% фрилансеров уже используют AI. Попробуйте хотя бы один.
+TEXT: А для обложек — Midjourney. Делает картинку за 5 минут, от 10$ в месяц.
 
 [SCENE 5]
 GROUP: outro
 VISUAL: subscribe button animation
-TEXT: Подписывайтесь — дальше разберём ещё больше AI-лайфхаков.
+TEXT: Ты всё ещё тратишь 4 часа? Тогда следующий шаг — вот он.
 """
