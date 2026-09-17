@@ -31,7 +31,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
-          pip install edge-tts requests openai huggingface_hub
+          pip install edge-tts requests openai huggingface_hub faster-whisper
 
       - name: Run factory
         env:
