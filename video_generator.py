@@ -105,12 +105,6 @@ class VideoGenerator:
         except Exception:
             return []
 
-    def _find_current_sentence(self, subtitles, t):
-        for s in subtitles:
-            if s["start"] <= t <= s["end"]:
-                return s["text"]
-        return None
-
     def _ken_burns(self, image_path, duration, direction="in"):
         try:
             img_clip = ImageClip(image_path).set_duration(duration)
@@ -121,9 +115,9 @@ class VideoGenerator:
         if img_clip.w < self.width:
             img_clip = img_clip.resize(width=self.width)
         if direction == "in":
-            zoomed = img_clip.resize(lambda t: 1 + 0.15 * (t / duration))
+            zoomed = img_clip.resize(lambda t: 1 + 0.12 * (t / duration))
         else:
-            zoomed = img_clip.resize(lambda t: 1.15 - 0.15 * (t / duration))
+            zoomed = img_clip.resize(lambda t: 1.12 - 0.12 * (t / duration))
         zoomed = zoomed.crop(
             x_center=zoomed.w / 2,
             y_center=zoomed.h / 2,
@@ -143,9 +137,16 @@ class VideoGenerator:
                 draw.text((x + dx, y + dy), text, font=font, fill=outline)
         draw.text((x, y), text, font=font, fill=fill)
 
-    def _add_subtitle(self, clip, subtitles, global_start, scene_text):
-        font = self._load_font(58)
+    def _add_single_subtitle(self, clip, text, duration):
+        """Один субтитр = одно предложение."""
+        font = self._load_font(52)
         W, H = self.width, self.height
+
+        text = text[:120]
+        if len(text) == 120:
+            text = text.rsplit(" ", 1)[0] + "..."
+
+        wrapped = textwrap.fill(text, width=28)
 
         def add_text(get_frame, t):
             frame = get_frame(t).copy()
@@ -156,72 +157,91 @@ class VideoGenerator:
             img = Image.fromarray(frame).convert("RGBA")
             draw = ImageDraw.Draw(img)
 
-            text = None
-            if subtitles:
-                text = self._find_current_sentence(subtitles, global_start + t)
-            if not text:
-                text = scene_text
+            lines = wrapped.split("\n")
+            line_heights = []
+            for line in lines:
+                bbox = draw.textbbox((0, 0), line, font=font)
+                line_heights.append(bbox[3] - bbox[1])
+            total_h = sum(line_heights) + (len(lines) - 1) * 8
 
-            if text:
-                wrapped = textwrap.fill(text, width=30)
-                lines = wrapped.split("\n")
+            y_start = H - 150 - total_h
+            if y_start < H * 0.5:
+                y_start = H * 0.5
 
-                line_heights = []
-                for line in lines:
-                    bbox = draw.textbbox((0, 0), line, font=font)
-                    line_heights.append(bbox[3] - bbox[1])
-                total_h = sum(line_heights) + (len(lines) - 1) * 10
-
-                y_start = H - 180 - total_h
-
-                for i, line in enumerate(lines):
-                    bbox = draw.textbbox((0, 0), line, font=font)
-                    line_w = bbox[2] - bbox[0]
-                    x = (W - line_w) // 2
-                    y = y_start + sum(line_heights[:i]) + i * 10
-                    self._draw_text_with_outline(
-                        draw, x, y, line, font,
-                        fill=(255, 255, 255, 255),
-                        outline=(0, 0, 0, 255),
-                        outline_width=4,
-                    )
+            for i, line in enumerate(lines):
+                bbox = draw.textbbox((0, 0), line, font=font)
+                line_w = bbox[2] - bbox[0]
+                x = (W - line_w) // 2
+                y = y_start + sum(line_heights[:i]) + i * 8
+                self._draw_text_with_outline(
+                    draw, x, y, line, font,
+                    fill=(255, 255, 255, 255),
+                    outline=(0, 0, 0, 255),
+                    outline_width=4,
+                )
             return np.array(img.convert("RGB"))
 
         return clip.fl(add_text)
 
     def assemble_shorts(self, script, audio_path, title, output_filename="shorts.mp4"):
+        """Одна картинка на каждое предложение."""
         print(f"\n📱 Собираю Shorts...")
 
         audio = AudioFileClip(audio_path) if audio_path and Path(audio_path).exists() else None
         total_duration = audio.duration if audio else 60
 
         subtitles = self._load_subtitles(audio_path)
-        if subtitles:
-            print(f"📝 Загружено {len(subtitles)} предложений для субтитров")
-        else:
-            print("ℹ️ Тайм-коды не найдены — субтитры = текст сцены")
+        if not subtitles:
+            print("⚠️ Нет тайм-кодов Whisper — использую сцены напрямую")
 
         scenes = self._parse_scenes(script)
         print(f"📊 Сцен: {len(scenes)}")
 
-        scene_duration = total_duration / max(len(scenes), 1)
-        print(f"⏱ Каждая сцена: {scene_duration:.1f} сек")
-
         clips = []
-        global_start = 0.0
 
-        for i, scene in enumerate(scenes):
-            img_path = self.fetcher.fetch(scene["group"], scene["visual"], index=i)
-            if img_path:
-                direction = random.choice(["in", "out"])
-                base = self._ken_burns(img_path, scene_duration, direction)
-            else:
-                base = ColorClip(size=(self.width, self.height),
-                                 color=self.colors["background"],
-                                 duration=scene_duration)
-            clip = self._add_subtitle(base, subtitles, global_start, scene["text"])
-            clips.append(clip)
-            global_start += scene_duration
+        if subtitles:
+            # Используем тайм-коды Whisper: одна сцена = одно предложение
+            print(f"📝 Использую {len(subtitles)} тайм-кодов Whisper")
+            for i, sent in enumerate(subtitles):
+                visual = "abstract background"
+                group = "intro"
+                if i < len(scenes):
+                    visual = scenes[i]["visual"]
+                    group = scenes[i]["group"]
+
+                duration = sent["end"] - sent["start"]
+                if duration < 0.5:
+                    continue
+
+                img_path = self.fetcher.fetch(group, visual, index=i)
+                if img_path:
+                    direction = random.choice(["in", "out"])
+                    base = self._ken_burns(img_path, duration, direction)
+                else:
+                    base = ColorClip(size=(self.width, self.height),
+                                     color=self.colors["background"],
+                                     duration=duration)
+
+                clip = self._add_single_subtitle(base, sent["text"], duration)
+                clips.append(clip)
+        else:
+            # Fallback: по сценам
+            scene_duration = total_duration / max(len(scenes), 1)
+            for i, scene in enumerate(scenes):
+                img_path = self.fetcher.fetch(scene["group"], scene["visual"], index=i)
+                if img_path:
+                    direction = random.choice(["in", "out"])
+                    base = self._ken_burns(img_path, scene_duration, direction)
+                else:
+                    base = ColorClip(size=(self.width, self.height),
+                                     color=self.colors["background"],
+                                     duration=scene_duration)
+                clip = self._add_single_subtitle(base, scene["text"], scene_duration)
+                clips.append(clip)
+
+        if not clips:
+            print("⚠️ Не удалось собрать ни одной сцены")
+            return None
 
         final = concatenate_videoclips(clips, method="compose")
 
