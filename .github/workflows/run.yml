@@ -10,7 +10,7 @@ on:
       topic:
         description: 'Тема'
         required: true
-        default: 'Топ-3 AI для копирайтеров'
+        default: 'Почему твои тексты не работают'
 
 jobs:
   build:
@@ -31,13 +31,15 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
-          pip install edge-tts requests openai gTTS
+          pip install edge-tts requests openai huggingface_hub
 
       - name: Run factory
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+          UNSPLASH_API_KEY: ${{ secrets.UNSPLASH_API_KEY }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           python main.py create "${{ github.event.inputs.niche }}" "${{ github.event.inputs.topic }}"
 
