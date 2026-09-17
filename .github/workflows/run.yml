@@ -44,7 +44,7 @@ jobs:
           r = requests.post(
               'https://openrouter.ai/api/v1/chat/completions',
               headers={'Authorization': f'Bearer {key}', 'Content-Type': 'application/json'},
-              json={'model': 'qwen/qwen3.6-plus-preview:free', 'messages': [{'role': 'user', 'content': 'Скажи привет одним словом'}]},
+              json={'model': 'qwen/qwen3.6-plus:free', 'messages': [{'role': 'user', 'content': 'Скажи привет одним словом'}]},
               timeout=60,
           )
           print(f'Status: {r.status_code}')
