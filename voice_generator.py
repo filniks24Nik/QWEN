@@ -11,7 +11,7 @@ class VoiceGenerator:
         self.output_dir = Path("audio_output")
         self.output_dir.mkdir(exist_ok=True)
         self.voice = "ru-RU-DmitryNeural"
-        self.rate = "+0%"
+        self.rate = "+25%"
         self.pitch = "+0Hz"
 
     def _disable_proxy(self):
