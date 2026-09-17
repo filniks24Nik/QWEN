@@ -33,12 +33,31 @@ jobs:
           pip install -r requirements.txt
           pip install edge-tts requests openai huggingface_hub faster-whisper
 
+      - name: Test OpenRouter connection
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: |
+          python -c "
+          import os, requests, json
+          key = os.environ['OPENROUTER_API_KEY']
+          print(f'Key starts with: {key[:12]}...')
+          r = requests.post(
+              'https://openrouter.ai/api/v1/chat/completions',
+              headers={'Authorization': f'Bearer {key}', 'Content-Type': 'application/json'},
+              json={'model': 'minimax/minimax-m2.5:free', 'messages': [{'role': 'user', 'content': 'Скажи привет одним словом'}]},
+              timeout=30,
+          )
+          print(f'Status: {r.status_code}')
+          print(f'Response: {r.text[:500]}')
+          "
+
       - name: Run factory
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: |
           python main.py create "${{ github.event.inputs.niche }}" "${{ github.event.inputs.topic }}"
 
